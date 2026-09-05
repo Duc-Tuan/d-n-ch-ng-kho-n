@@ -632,6 +632,8 @@ function SymbolsEditor({
           showSelectAll
           showExchangeBulk
           showUpload
+          searchPath={`${ADMIN}/market/symbols/search`}
+          codesPath={`${ADMIN}/market/symbols/codes`}
         />
 
         {/* BR-860c — không xoá âm thầm; cảnh báo trước hệ quả với khách hàng đã đăng ký. */}

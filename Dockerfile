@@ -41,6 +41,10 @@ RUN npm run build
 # Bỏ devDependencies (typescript, tailwind, @types…) — `next start` không cần.
 RUN npm prune --omit=dev
 
+# Claude Code CLI cài riêng vào /opt/claude-cli (không phải global mặc định của
+# ảnh node) để copy gọn sang stage runtime — image đó không có `npm` đầy đủ.
+RUN npm install -g --prefix /opt/claude-cli @anthropic-ai/claude-code
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2 — ảnh chạy: Python 3.11 (khớp .venv của môi trường dev) + Node runtime
@@ -60,6 +64,16 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl libstdc++6 \
  && rm -rf /var/lib/apt/lists/* \
  && node --version
+
+# Claude Code CLI — nhánh phân tích AI (app/services/analysis/runner.py) spawn
+# `claude -p` bằng subprocess. Không cài thì `shutil.which("claude")` trả None
+# và tiến trình chết ngay với FileNotFoundError trước khi kịp gọi model.
+# Copy nguyên cây cài global từ stage frontend-build (đã cài ở /opt/claude-cli):
+# giữ cấu trúc bin/ + lib/node_modules/ tương đối như lúc `npm install -g` sinh
+# ra, vì shim trong bin/ require tương đối tới lib/node_modules/.
+COPY --from=frontend-build /opt/claude-cli/bin/claude /usr/local/bin/claude
+COPY --from=frontend-build /opt/claude-cli/lib/node_modules /usr/local/lib/node_modules
+RUN claude --version
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -84,6 +98,13 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 COPY backend/app        /app/backend/app
 COPY backend/alembic    /app/backend/alembic
 COPY backend/alembic.ini /app/backend/alembic.ini
+
+# Cấu hình MCP cho `claude -p` (app/services/analysis/runner.py đọc ở
+# /app/.claude/mcp-analysis.json). Sinh ngay lúc build vì cả hai đường dẫn tuyệt
+# đối bên trong (python + server.py) đều cố định theo cấu trúc ảnh này — không
+# phụ thuộc máy host, nên không cần chạy tay sau khi container đã lên như ở
+# README (phần đó viết cho máy cài trực tiếp, không phải Docker).
+RUN cd backend && python -m app.scripts.write_mcp_config
 
 # ── Frontend (đã build) ──────────────────────────────────────────────────────
 COPY --from=frontend-build /build/.next          /app/frontend/.next
@@ -139,8 +160,11 @@ RUN useradd --create-home --shell /usr/sbin/nologin appuser \
  && chown -R appuser:appuser /app
 USER appuser
 
-# Thư mục file khách hàng tải lên — gắn volume để không mất khi dựng lại container.
-VOLUME ["/app/backend/storage"]
+# Thư mục file khách hàng tải lên, và home của appuser — gắn volume để không mất
+# khi dựng lại container. Home phải có volume riêng vì `claude login` ghi hồ sơ
+# OAuth vào ~/.claude*: không mount thì container mất đăng nhập ở lần build kế
+# tiếp, và job phân tích AI lại chết với đúng lỗi "Không chạy được Claude Code CLI".
+VOLUME ["/app/backend/storage", "/home/appuser"]
 
 EXPOSE 3000 8000
 

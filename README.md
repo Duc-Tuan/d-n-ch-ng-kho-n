@@ -342,6 +342,18 @@ claude --version          # đã cài chưa
 claude mcp get stock-analysis   # MCP server có kết nối được không
 ```
 
+**Chạy bằng Docker (`docker-compose.yml`):** image đã cài sẵn Claude Code CLI và có volume
+`claude_home` gắn vào `/home/appuser` để giữ hồ sơ OAuth qua các lần `docker compose up --build`.
+Đăng nhập một lần sau khi container đã lên, đúng user `appuser` (user chạy uvicorn):
+
+```bash
+docker compose --env-file .env.docker exec -u appuser app claude login
+```
+
+Lệnh in ra một URL — mở trên máy có trình duyệt, đăng nhập xong CLI trong container tự nhận. Bỏ
+qua bước này (hoặc tạo lại volume `stock_claude_home`) là nguyên nhân phổ biến nhất của lỗi "Không
+chạy được Claude Code CLI (claude)" ở site khách hàng.
+
 ### Cấu hình (`.env`)
 
 | Biến | Mặc định | Ý nghĩa |

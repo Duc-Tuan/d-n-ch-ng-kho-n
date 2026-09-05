@@ -45,6 +45,8 @@ export function SymbolPicker({
   showExchangeBulk = false,
   showSelectAll = false,
   showUpload = false,
+  searchPath = `${CUSTOMER}/market/symbols`,
+  codesPath = `${CUSTOMER}/market/symbols/codes`,
 }: {
   value: string[];
   onChange: (symbols: string[]) => void;
@@ -59,6 +61,15 @@ export function SymbolPicker({
   showSelectAll?: boolean;
   /** Cho phép nạp danh sách mã từ file .txt/.csv. */
   showUpload?: boolean;
+  /**
+   * Endpoint tra cứu mã (ô tìm kiếm tự xổ). Mặc định route Customer Site — component này còn
+   * dùng ở đó (`MyStrategyForms`). Trang Admin phải truyền route riêng của Admin Site: route
+   * Customer đòi cookie `cst_at`, nhân viên gọi vào sẽ nhận 401 trừ khi tình cờ cũng đang đăng
+   * nhập khách hàng trên cùng trình duyệt/host — xem `admin/market.py: search_symbols()`.
+   */
+  searchPath?: string;
+  /** Endpoint lấy toàn bộ mã (chọn cả sàn/cả danh mục/đối chiếu file). Cùng lý do ở trên. */
+  codesPath?: string;
 }) {
   const toast = useToast();
   const [query, setQuery] = useState('');
@@ -67,7 +78,7 @@ export function SymbolPicker({
   const fileInput = useRef<HTMLInputElement>(null);
 
   const { data: results, isLoading } = useApiQuery<SymbolInfo[]>(
-    query.length >= 1 ? `${CUSTOMER}/market/symbols` : null,
+    query.length >= 1 ? searchPath : null,
     { q: query, limit: 30 },
   );
 
@@ -95,10 +106,7 @@ export function SymbolPicker({
   }
 
   async function fetchCodes(exchange?: string): Promise<string[]> {
-    return api.get<string[]>(
-      `${CUSTOMER}/market/symbols/codes`,
-      exchange ? { exchange } : undefined,
-    );
+    return api.get<string[]>(codesPath, exchange ? { exchange } : undefined);
   }
 
   /** Thêm toàn bộ mã của một sàn — tiện khi chiến lược áp cho cả sàn thay vì vài mã lẻ. */

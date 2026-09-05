@@ -68,6 +68,23 @@ services:
       - "8000:8000"
     volumes:
       - stock_storage:/app/backend/storage
+      # Hồ sơ OAuth của `claude login` sống ở ~appuser/.claude* — không mount thì
+      # mỗi lần `docker compose up --build` lại mất đăng nhập, và nhánh phân tích
+      # AI (runner.py) chết ngay với lỗi "Không chạy được Claude Code CLI".
+      - claude_home:/home/appuser
+
+  nginx:
+    image: nginx:alpine
+    container_name: stock-nginx
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      # Cổng 80 để gọi qua tên miền (vd: http://phantichck.com) không cần gõ :3000.
+      # File hosts của máy client phải trỏ tên miền đó về IP máy chạy container này.
+      - "80:80"
+    volumes:
+      - ./nginx/phantichck.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   mysql_data:
@@ -79,3 +96,6 @@ volumes:
     # Không đánh `external: true`: nếu chưa từng chạy deploy.sh thì compose tự tạo,
     # còn nếu đã có sẵn thì dùng lại chính nó chứ không tạo bản mới.
     name: stock_storage
+  claude_home:
+    # Giữ hồ sơ OAuth của Claude Code CLI qua các lần build lại image.
+    name: stock_claude_home

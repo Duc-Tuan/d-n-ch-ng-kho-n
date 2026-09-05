@@ -259,6 +259,8 @@ export default function NewStrategyPage() {
           showSelectAll
           showExchangeBulk
           showUpload
+          searchPath={`${ADMIN}/market/symbols/search`}
+          codesPath={`${ADMIN}/market/symbols/codes`}
           extraActions={
             <Button
               size="sm"

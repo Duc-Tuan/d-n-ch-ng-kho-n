@@ -26,7 +26,7 @@ from app.core.pagination import PageParams, build_page, count_of, page_params
 from app.models.market import MarketSyncLog, OhlcvDaily, Symbol
 from app.models.staff import Staff
 from app.schemas.common import Message
-from app.schemas.domain import CandleOut
+from app.schemas.domain import CandleOut, SymbolOut
 from app.services import market_data
 from app.services.audit_service import AuditAction, log_action
 
@@ -317,6 +317,36 @@ def delete_symbol(
         message=f"Đã xoá {symbol} khỏi danh mục cùng {result['bars']:,} nến giá.",
         code="SYMBOL_DELETED",
     )
+
+
+@router.get("/symbols/search", response_model=list[SymbolOut])
+def search_symbols(
+    staff: CanView,
+    db: DbSession,
+    q: str | None = Query(default=None, max_length=50, description="Tìm theo mã hoặc tên công ty"),
+    exchange: str | None = Query(default=None, description="HOSE | HNX | UPCOM"),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> list[SymbolOut]:
+    """Tra cứu mã cho ô chọn mã khi dựng chiến lược.
+
+    Bản riêng cho Admin Site — xem lý do ở docstring `ohlcv()` ngay dưới: route bên Customer
+    Site (`app.api.customer.market.list_symbols`) đòi cookie `cst_at`, nhân viên trực trang quản
+    trị gọi vào đó luôn nhận 401 trừ khi tình cờ cũng đang đăng nhập khách hàng trên cùng trình
+    duyệt. Đường dẫn khác `/symbols` (đã dùng cho danh mục quản lý mã) để không đụng route.
+    """
+    rows = market_data.search_symbols(db, query=q, exchange=exchange, limit=limit)
+    return [SymbolOut.model_validate(r) for r in rows]
+
+
+@router.get("/symbols/codes", response_model=list[str])
+def list_symbol_codes(
+    staff: CanView,
+    db: DbSession,
+    exchange: str | None = Query(default=None, description="HOSE | HNX | UPCOM"),
+) -> list[str]:
+    """Chỉ danh sách mã — cho nút chọn cả sàn/cả danh mục. Bản riêng cho Admin Site, lý do như
+    `search_symbols()` ở trên."""
+    return market_data.list_symbol_codes(db, exchange=exchange)
 
 
 @router.get("/ohlcv", response_model=dict)
