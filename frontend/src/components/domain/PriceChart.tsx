@@ -101,7 +101,7 @@ export function PriceChart({
   const size = useElementSize(hostRef);
 
   const [range, setRange] = useState('1y');
-  const [fullscreen, setFullscreen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [candles, setCandles] = useState<Candle[]>(initialCandles);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
@@ -124,51 +124,25 @@ export function PriceChart({
     setExhausted(false);
   }, [initialCandles, symbol]);
 
-  /* ── Toàn màn hình ─────────────────────────────────────────────────────── */
+  /* ── Mở rộng kín khung nhìn ──────────────────────────────────────────────
+       Lớp phủ `fixed inset-0` **trong trang**, không gọi `requestFullscreen`: biểu đồ chiếm
+       trọn cả bề ngang lẫn bề dọc khung nhìn — thoát khỏi cột phải chật của bảng giá — nhưng
+       trình duyệt vẫn là trình duyệt, thanh tab và thanh địa chỉ còn nguyên. */
 
-  /**
-   * Xin toàn màn hình **của cả trang** (`documentElement`) chứ không của riêng khung biểu đồ.
-   *
-   * Modal chọn chỉ báo render qua portal gắn vào `<body>`, tức nằm ngoài khung biểu đồ. Nếu
-   * phần tử toàn màn hình là khung đó, trình duyệt chỉ vẽ phần tử ấy và cây con của nó — bấm
-   * "Chỉ báo" sẽ không thấy gì hiện ra.
-   *
-   * Trình duyệt có thể từ chối (Safari trên iPhone không cho phần tử thường vào toàn màn hình).
-   * Lúc đó vẫn còn lớp phủ `fixed inset-0` bên dưới, nên biểu đồ vẫn chiếm trọn khung nhìn,
-   * chỉ là thanh trình duyệt còn đó.
-   */
+  // Esc để thu nhỏ — nhưng nhường cho modal đang mở, vì Esc của nó phải đóng modal trước.
   useEffect(() => {
-    if (!fullscreen) return;
-
-    document.documentElement.requestFullscreen?.()?.catch(() => {});
-
-    // Người dùng có thể thoát toàn màn hình bằng Esc hay F11 mà không qua nút của mình —
-    // phải nghe lại để lớp phủ đóng theo, không thì màn hình kẹt ở trạng thái nửa vời.
-    const onChange = () => {
-      if (!document.fullscreenElement) setFullscreen(false);
-    };
-    document.addEventListener('fullscreenchange', onChange);
-
-    return () => {
-      document.removeEventListener('fullscreenchange', onChange);
-      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-    };
-  }, [fullscreen]);
-
-  // Esc để thoát — nhưng nhường cho modal đang mở, vì Esc của nó phải đóng modal trước.
-  useEffect(() => {
-    if (!fullscreen) return;
+    if (!expanded) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !pickerOpen && !settingsId) setFullscreen(false);
+      if (event.key === 'Escape' && !pickerOpen && !settingsId) setExpanded(false);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [fullscreen, pickerOpen, settingsId]);
+  }, [expanded, pickerOpen, settingsId]);
 
   // Khoá cuộn nền: lớp phủ che kín rồi, để trang phía sau cuộn được chỉ gây trôi vị trí khi thoát.
   useEffect(() => {
-    if (!fullscreen) return;
+    if (!expanded) return;
 
     const { body } = document;
     const previous = body.style.overflow;
@@ -176,7 +150,7 @@ export function PriceChart({
     return () => {
       body.style.overflow = previous;
     };
-  }, [fullscreen]);
+  }, [expanded]);
 
   /** YC9 — tải thêm nến cũ hơn nến sớm nhất đang có. */
   const loadOlder = useCallback(async () => {
@@ -485,13 +459,13 @@ export function PriceChart({
     <div
       className={cn(
         'space-y-3',
-        fullscreen && 'fixed inset-0 z-50 flex flex-col bg-surface p-3 sm:p-4',
+        expanded && 'fixed inset-0 z-50 flex flex-col bg-surface p-3 sm:p-4',
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1">
-          {/* Ra khỏi trang thì mất luôn phần đầu thẻ ghi mã đang xem — nhắc lại ở đây. */}
-          {fullscreen && symbol && (
+          {/* Lớp phủ che mất phần đầu thẻ ghi mã đang xem — nhắc lại ở đây. */}
+          {expanded && symbol && (
             <span className="mr-2 text-base font-semibold text-ink-900">{symbol}</span>
           )}
 
@@ -542,10 +516,10 @@ export function PriceChart({
           <IconButton
             size="sm"
             variant="outline"
-            label={fullscreen ? 'Thu nhỏ biểu đồ (Esc)' : 'Phóng to toàn màn hình'}
-            onClick={() => setFullscreen((on) => !on)}
+            label={expanded ? 'Thu nhỏ biểu đồ (Esc)' : 'Phóng to kín màn hình'}
+            onClick={() => setExpanded((on) => !on)}
           >
-            <Icon name={fullscreen ? 'minimize' : 'maximize'} size={16} />
+            <Icon name={expanded ? 'minimize' : 'maximize'} size={16} />
           </IconButton>
         </span>
       </div>
@@ -553,13 +527,13 @@ export function PriceChart({
       <div
         className={cn(
           'overflow-hidden rounded-lg border border-ink-200',
-          fullscreen && 'flex min-h-0 flex-1 flex-col',
+          expanded && 'flex min-h-0 flex-1 flex-col',
         )}
       >
         <div
           ref={hostRef}
-          className={cn('relative w-full', fullscreen && 'min-h-0 flex-1')}
-          style={fullscreen ? undefined : { height }}
+          className={cn('relative w-full', expanded && 'min-h-0 flex-1')}
+          style={expanded ? undefined : { height }}
         >
           <div ref={containerRef} className="absolute inset-0" />
 
