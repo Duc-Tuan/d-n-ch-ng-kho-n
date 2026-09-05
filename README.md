@@ -454,6 +454,91 @@ vẫn chạy, vẫn ra số đẹp, chỉ có điều số đó là bịa và kh
 
 ---
 
+## 8b. Dựng trên máy mới bằng Docker (clone từ git)
+
+Máy đích chỉ cần **Docker Desktop** (Windows/macOS) hoặc **Docker Engine + plugin compose**
+(Linux). Không cần cài Python, Node hay MySQL.
+
+```bash
+git clone <repo> my-stock-system
+cd my-stock-system
+
+cp backend/.env.example backend/.env     # Windows: copy backend\.env.example backend\.env
+```
+
+Sửa `backend/.env` — tối thiểu bốn chỗ:
+
+| Biến | Ghi chú |
+|---|---|
+| `DB_PASSWORD` | Không được để trống, đây cũng là mật khẩu root của MySQL trong container |
+| `JWT_SECRET_CUSTOMER` | `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
+| `JWT_SECRET_STAFF` | Sinh riêng, **phải khác** cái trên |
+| `SEED_SUPER_ADMIN_PASSWORD` | Mật khẩu Super Admin lần đầu |
+
+Rồi chạy một lệnh:
+
+```bash
+./deploy.sh          # Linux/macOS/Git Bash
+deploy.bat           # Windows, nháy đúp cũng được
+```
+
+Script tự lọc `.env`, build image, dựng MySQL + ứng dụng, chờ healthy, chạy
+`alembic upgrade head`, rồi nạp dữ liệu nền. Xong thì vào `http://localhost:3000`
+đăng nhập bằng `SEED_SUPER_ADMIN_USERNAME` / `SEED_SUPER_ADMIN_PASSWORD` vừa đặt,
+và **đổi mật khẩu ngay**.
+
+### Máy mới có sẵn những gì
+
+| | Ở đâu ra | Có trong git |
+|---|---|---|
+| Quyền, vai trò, gói dịch vụ, danh mục bài viết, template thông báo, văn bản pháp lý, lịch giao dịch | `app.scripts.seed` chạy tự động ở bước 7 | — (sinh từ code) |
+| Super Admin | cùng chỗ, lấy từ `SEED_SUPER_ADMIN_*` trong `.env` | — |
+| 150 mã chứng khoán | `backend/seed_data/symbols.sql` | **có** |
+| Tài khoản nhân sự + khách hàng thật | `backups/clone_accounts.sql` | **không** |
+| Lịch sử giá `ohlcv_daily` | chuyển tay bằng `mysqldump` | không |
+
+Hai dòng cuối là cố ý. `clone_accounts.sql` chứa hash mật khẩu bcrypt, secret TOTP
+và email khách hàng thật — không đẩy lên git, không gửi cho khách. Máy mới thiếu
+nó là chuyện bình thường: deploy.sh báo một dòng rồi đi tiếp, tài khoản duy nhất
+là Super Admin vừa seed.
+
+### Bê dữ liệu giữa các máy của mình
+
+Ở máy **có** MySQL dev, sinh lại hai file `.sql` từ database thật:
+
+```bash
+./deploy.sh --dump-clone
+```
+
+- `backend/seed_data/symbols.sql` → commit lên git như mã nguồn.
+- `backups/clone_accounts.sql` → chép tay sang máy kia (USB, scp, thư mục chia sẻ),
+  đặt đúng đường dẫn đó rồi chạy lại `./deploy.sh`.
+
+Lịch sử giá đi riêng vì nặng (hơn 520k dòng, từ năm 2000):
+
+```bash
+mysqldump -h 127.0.0.1 -P 3306 -u root -p --single-transaction   --default-character-set=utf8mb4 stock_system ohlcv_daily > backups/ohlcv.sql
+docker compose --env-file .env.docker exec -T db mysql -uroot -p stock_system < backups/ohlcv.sql
+```
+
+### Cờ hay dùng của deploy.sh
+
+| Cờ | Việc |
+|---|---|
+| `--no-cache` | Build lại từ số 0 |
+| `--skip-build` | Dùng lại image cũ, chỉ dựng lại container |
+| `--skip-migrate` | Bỏ `alembic upgrade head` |
+| `--skip-seed` | Bỏ cả seed lẫn hai file `.sql` |
+| `--dump-clone` | Chỉ sinh lại hai file `.sql` từ MySQL máy dev rồi thoát |
+| `--db-only` | Chỉ dựng MySQL |
+| `--logs` | Bám log sau khi healthy |
+
+> Bỏ bước 7 (`--skip-seed`) trên một database mới tinh thì bảng `staff` không có
+> dòng nào, và **mọi lần đăng nhập trả 401** — không có cookie phiên nên mọi
+> request sau đó cũng 401 theo. Nếu gặp 401 hàng loạt, kiểm tra bảng `staff` trước.
+
+---
+
 ## 9. Triển khai production
 
 **Trước khi lên production**

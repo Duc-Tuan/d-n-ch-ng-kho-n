@@ -9,6 +9,9 @@ Thumbs.db
 *.bat
 *.cmd
 *.ps1
+# Trừ deploy.bat: đó là vỏ bọc gọi deploy.sh từ cmd.exe, KHÔNG phải script dev.
+# Máy Windows nào clone repo về cũng cần nó để triển khai mà không phải mở Git Bash.
+!deploy.bat
 
 # ── Thư mục không đẩy lên remote ──────────────────────────────────────────────
 # Dấu "/" ở đầu neo vào thư mục gốc: không đụng tới `backend/app/scripts/`
@@ -48,3 +51,9 @@ storage/
 *.sqlite3
 *.sql
 *.log
+
+# Trừ danh mục mã: dữ liệu tham chiếu công khai (mã, sàn, tên công ty, ngành),
+# không có gì riêng tư. Máy mới clone về mà thiếu file này thì bảng `symbols`
+# rỗng và toàn bộ màn hình thị trường trắng trơn. deploy.sh nạp nó ở bước 7.
+# Tài khoản thật nằm ở backups/clone_accounts.sql và vẫn bị chặn — cố ý.
+!backend/seed_data/*.sql

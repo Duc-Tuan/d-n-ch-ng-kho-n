@@ -8,6 +8,8 @@
 #   ./deploy.sh                  # quy trình đầy đủ (cả MySQL)
 #   ./deploy.sh --no-cache       # build lại từ số 0, không dùng layer cache
 #   ./deploy.sh --skip-migrate   # bỏ qua `alembic upgrade head`
+#   ./deploy.sh --skip-seed      # bỏ qua nạp dữ liệu nền (clone SQL + seed.py)
+#   ./deploy.sh --dump-clone     # chỉ dump lại file clone từ MySQL máy dev rồi thoát
 #   ./deploy.sh --skip-build     # dùng lại image cũ, chỉ dựng lại container
 #   ./deploy.sh --db-only        # chỉ dựng MySQL, không đụng tới ứng dụng
 #   ./deploy.sh --prune          # xoá luôn image mồ côi (dangling) sau khi build
@@ -30,10 +32,33 @@ cd "$(dirname "$0")"
 IMAGE="${IMAGE:-my-stock-system}"
 CONTAINER="${CONTAINER:-stock}"              # phải khớp container_name của service `app`
 DB_CONTAINER="${DB_CONTAINER:-stock-mysql}"  # ... và của service `db`
+DB_SERVICE="${DB_SERVICE:-db}"               # tên SERVICE trong compose (khác container_name)
 PORT_WEB="${PORT_WEB:-3000}"
 PORT_API="${PORT_API:-8000}"
 SRC_ENV="${SRC_ENV:-backend/.env}"
 RUN_ENV="${RUN_ENV:-.env.docker}"
+
+# Dữ liệu nền nạp sau migration, TÁCH LÀM HAI vì hai file có số phận khác nhau
+# trên git (xem .gitignore):
+#
+#   symbols.sql   danh mục mã — dữ liệu tham chiếu công khai (mã, sàn, tên công
+#                 ty, ngành), không có gì riêng tư. VÀO GIT, để máy nào clone về
+#                 cũng chạy được ngay.
+#   clone_accounts.sql
+#                 tài khoản thật: hash mật khẩu bcrypt, secret TOTP, email khách
+#                 hàng. KHÔNG VÀO GIT. Chỉ dùng khi bê dữ liệu giữa các máy của
+#                 mình; máy khách không cần và không nên có file này — seed.py
+#                 tự tạo Super Admin từ SEED_SUPER_ADMIN_* trong backend/.env.
+#
+# Cả hai sinh bằng `--dump-clone`; chú thích đầu mỗi file ghi rõ bảng nào và vì sao.
+SYMBOLS_SQL="${SYMBOLS_SQL:-backend/seed_data/symbols.sql}"
+SYMBOLS_TABLES="symbols"
+CLONE_SQL="${CLONE_SQL:-backups/clone_accounts.sql}"
+CLONE_TABLES="staff packages users subscriptions notification_preferences"
+
+DEV_DB_HOST="${DEV_DB_HOST:-host.docker.internal}"
+DEV_DB_PORT="${DEV_DB_PORT:-3306}"
+DEV_DB_USER="${DEV_DB_USER:-root}"
 
 # Ghim tên project để tên volume/network không đổi theo tên thư mục chứa mã nguồn.
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-stock}"
@@ -41,6 +66,8 @@ export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-stock}"
 TAG=""
 NO_CACHE=""
 SKIP_MIGRATE=0
+SKIP_SEED=0
+DUMP_CLONE=0
 SKIP_BUILD=0
 DB_ONLY=0
 PRUNE=0
@@ -50,12 +77,14 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-cache)     NO_CACHE="--no-cache" ;;
     --skip-migrate) SKIP_MIGRATE=1 ;;
+    --skip-seed)    SKIP_SEED=1 ;;
+    --dump-clone)   DUMP_CLONE=1 ;;
     --skip-build)   SKIP_BUILD=1 ;;
     --db-only)      DB_ONLY=1 ;;
     --prune)        PRUNE=1 ;;
     --logs)         FOLLOW_LOGS=1 ;;
     --tag)          TAG="${2:?--tag cần một giá trị, ví dụ: --tag 1.2}"; shift ;;
-    -h|--help)      sed -n '3,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help)      sed -n '3,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *)              echo "Tham số lạ: $1 (dùng --help)" >&2; exit 2 ;;
   esac
   shift
@@ -101,10 +130,83 @@ DB_PASSWORD_VALUE="$(sed -nE 's/^DB_PASSWORD=(.*)$/\1/p' "$RUN_ENV" | head -1)"
 [ -n "$DB_PASSWORD_VALUE" ] \
   || die "DB_PASSWORD trống trong $SRC_ENV — MySQL trong container bắt buộc phải có mật khẩu root."
 
+# Tên schema — cần cho cả bước nạp clone lẫn `--dump-clone`. docker-compose.yml
+# mặc định `stock_system` khi biến vắng mặt; giữ đúng mặc định đó.
+DB_NAME_VALUE="$(sed -nE 's/^DB_NAME=(.*)$/\1/p' "$RUN_ENV" | head -1)"
+DB_NAME_VALUE="${DB_NAME_VALUE:-stock_system}"
+
 # DB_HOST không cần sửa: docker-compose.yml đè thành `db` cho riêng container app,
 # nên $SRC_ENV vẫn giữ 127.0.0.1 để chạy backend tay ngoài Docker như trước.
 grep -qE '^DB_HOST=' "$RUN_ENV" \
   || warn "Không thấy DB_HOST trong $SRC_ENV — compose vẫn đè thành 'db', nhưng nên khai báo cho rõ."
+
+# ── 1b. Chỉ dump lại hai file dữ liệu nền rồi thoát ──────────────────────────
+# Dùng mysqldump CỦA CONTAINER mysql:8.0 chứ không đòi máy dev có sẵn client:
+# máy Windows này chỉ cài MySQL Server + Workbench, mysqldump không nằm trên PATH.
+#
+# Giữ lại phần chú thích đầu file cũ (mọi dòng trước dòng `/*!...` đầu tiên do
+# mysqldump sinh ra) — tài liệu nằm ở đó, dump lại không nên xoá mất.
+dump_into() {
+  local out="$1"; shift
+  local head body
+  head="$(mktemp)"; body="$(mktemp)"
+  mkdir -p "$(dirname "$out")"
+
+  if [ -f "$out" ]; then
+    sed '/^\/\*!/,$d' "$out" > "$head"
+  else
+    printf -- '-- Sinh bằng: ./deploy.sh --dump-clone\n\n' > "$head"
+  fi
+
+  # MYSQL_PWD thay cho `-p<mật khẩu>`: tránh cảnh báo "using a password on the
+  # command line", và mật khẩu không lộ trong danh sách tiến trình của container.
+  dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" mysqldump \
+    -h "$DEV_DB_HOST" -P "$DEV_DB_PORT" -u "$DEV_DB_USER" \
+    --no-create-info --insert-ignore --complete-insert \
+    --single-transaction --skip-add-locks --skip-disable-keys \
+    --no-tablespaces --set-gtid-purged=OFF --skip-comments \
+    --default-character-set=utf8mb4 \
+    "$DB_NAME_VALUE" "$@" > "$body" \
+    || { rm -f "$head" "$body"; die "mysqldump thất bại — MySQL máy dev có chạy ở $DEV_DB_HOST:$DEV_DB_PORT không?"; }
+
+  # Ghi đè bằng file rỗng thì lần deploy sau mất sạch mà không ai biết.
+  [ -s "$body" ] || { rm -f "$head" "$body"; die "mysqldump trả về rỗng — giữ nguyên $out cũ."; }
+
+  cat "$head" "$body" > "$out"
+  rm -f "$head" "$body"
+  echo "  $out — $(wc -c < "$out") byte"
+}
+
+if [ "$DUMP_CLONE" -eq 1 ]; then
+  step "Dump dữ liệu nền từ $DEV_DB_HOST:$DEV_DB_PORT"
+  [ "$(docker inspect -f '{{.State.Status}}' "$DB_CONTAINER" 2>/dev/null || echo gone)" = "running" ] \
+    || die "Container '$DB_CONTAINER' không chạy. Chạy './deploy.sh --db-only' trước."
+
+  dump_into "$SYMBOLS_SQL" $SYMBOLS_TABLES
+  dump_into "$CLONE_SQL"   $CLONE_TABLES
+
+  # `staff_roles` KHÔNG dump theo id: id bảng `permissions` giữa máy dev và bản
+  # seed hiện tại đã lệch nhau (dev seed từ đợt cũ rồi mới thêm
+  # customer.create/symbol.manage vào cuối), nên id bảng `roles` cũng có ngày
+  # lệch theo. Sinh câu lệnh tra theo `username`/`code` để clone miễn nhiễm với
+  # chuyện id — đây là mắt xích quyết định tài khoản quản trị có đúng quyền không.
+  {
+    printf -- '\n--\n-- staff_roles: gán vai trò theo username/code, không theo id.\n--\n'
+    dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" \
+      mysql -h "$DEV_DB_HOST" -P "$DEV_DB_PORT" -u "$DEV_DB_USER" \
+      -N -B --default-character-set=utf8mb4 "$DB_NAME_VALUE" -e "
+        SELECT CONCAT('INSERT IGNORE INTO staff_roles (staff_id, role_id) SELECT s.id, r.id FROM staff s, roles r WHERE s.username=', QUOTE(s.username), ' AND r.code=', QUOTE(r.code), ';')
+        FROM staff_roles sr
+        JOIN staff s ON s.id = sr.staff_id
+        JOIN roles r ON r.id = sr.role_id
+        ORDER BY s.id, r.code;"
+  } >> "$CLONE_SQL" || die "Không sinh được phần staff_roles."
+
+  echo
+  echo "  $SYMBOLS_SQL vào git — nhớ commit."
+  echo "  $CLONE_SQL KHÔNG vào git (hash mật khẩu, email khách) — chép tay khi đổi máy."
+  exit 0
+fi
 
 # ── 2. Dọn container cũ chạy ngoài compose ───────────────────────────────────
 # Bản deploy.sh trước dựng `stock` bằng `docker run` trần. Compose không nhận nó
@@ -186,7 +288,53 @@ else
   step "Bỏ qua migration (--skip-migrate)"
 fi
 
-# ── 7. Dọn image mồ côi ──────────────────────────────────────────────────────
+# ── 7. Dữ liệu nền: seed → symbols → tài khoản ───────────────────────────────
+# Thiếu bước này thì alembic chỉ để lại bảng rỗng: bảng `staff` không có dòng nào
+# nên MỌI lần đăng nhập trả 401 INVALID_CREDENTIALS, và vì không có cookie phiên
+# nên mọi request sau đó cũng 401 theo — đúng triệu chứng gặp hôm 2026-09-05.
+#
+# seed.py chạy TRƯỚC vì nó là nguồn sự thật của permissions/roles/role_permissions
+# (tra theo `code`, gán lại mỗi lần chạy) và của packages/categories/template/văn
+# bản pháp lý/lịch giao dịch. Hai file .sql chạy SAU, chỉ mang thứ seed không biết.
+# Riêng phần staff_roles trong file tài khoản tra theo username/code nên bắt buộc
+# phải có bảng `roles` sẵn — thêm một lý do nữa để seed đi trước.
+load_sql() {
+  dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" \
+    mysql -u root --default-character-set=utf8mb4 "$DB_NAME_VALUE" < "$1" \
+    || die "Nạp $1 thất bại."
+}
+
+if [ "$DB_ONLY" -eq 1 ]; then
+  step "Bỏ qua dữ liệu nền (--db-only)"
+elif [ "$SKIP_SEED" -eq 1 ]; then
+  step "Bỏ qua dữ liệu nền (--skip-seed)"
+else
+  step "python -m app.scripts.seed"
+  dc exec -T -w /app/backend app python -m app.scripts.seed || die "seed thất bại."
+
+  # Danh mục mã — có trong git, máy nào clone về cũng phải thấy file này.
+  if [ -f "$SYMBOLS_SQL" ]; then
+    step "Nạp $SYMBOLS_SQL (danh mục mã)"
+    load_sql "$SYMBOLS_SQL"
+    echo "  $(dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" mysql -N -B -u root -e "select count(*) from $DB_NAME_VALUE.symbols" | tr -d '\r') mã trong bảng symbols."
+  else
+    warn "Không thấy $SYMBOLS_SQL — bảng symbols sẽ rỗng, màn hình thị trường không có gì."
+    warn "File này ĐÁNG LẼ có trong git. Sinh lại bằng: ./deploy.sh --dump-clone"
+  fi
+
+  # Tài khoản thật — KHÔNG có trong git. Máy khách không có file này là đúng.
+  if [ -f "$CLONE_SQL" ]; then
+    step "Nạp $CLONE_SQL (tài khoản)"
+    load_sql "$CLONE_SQL"
+    echo "  Toàn bộ là INSERT IGNORE — dòng đã có trong Docker giữ nguyên, không bị đè."
+  else
+    step "Không có $CLONE_SQL — bỏ qua phần tài khoản"
+    echo "  Bình thường trên máy mới: tài khoản duy nhất là Super Admin do seed.py tạo"
+    echo "  từ SEED_SUPER_ADMIN_* trong $SRC_ENV. Đăng nhập xong ĐỔI MẬT KHẨU ngay."
+  fi
+fi
+
+# ── 8. Dọn image mồ côi ──────────────────────────────────────────────────────
 # Chỉ động vào image dangling (không tag) — là bản build cũ vừa bị thay thế.
 if [ "$PRUNE" -eq 1 ]; then
   step "Dọn image mồ côi"
