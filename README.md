@@ -514,12 +514,49 @@ là Super Admin vừa seed.
 - `backups/clone_accounts.sql` → chép tay sang máy kia (USB, scp, thư mục chia sẻ),
   đặt đúng đường dẫn đó rồi chạy lại `./deploy.sh`.
 
-Lịch sử giá đi riêng vì nặng (hơn 520k dòng, từ năm 2000):
+### Bê TRỌN VẸN database sang máy khác
+
+Cách trên chỉ mang dữ liệu nền. Muốn máy kia giống hệt máy này — kể cả 523k dòng
+lịch sử giá, tín hiệu, bài viết, log — thì dump cả database ra một file:
 
 ```bash
-mysqldump -h 127.0.0.1 -P 3306 -u root -p --single-transaction   --default-character-set=utf8mb4 stock_system ohlcv_daily > backups/ohlcv.sql
-docker compose --env-file .env.docker exec -T db mysql -uroot -p stock_system < backups/ohlcv.sql
+./deploy.sh --dump-all
+# → backups/stock_system_full_20260905_1024.sql   (~40 MB)
 ```
+
+File đó là bản sao y hệt: `CREATE TABLE`, `DROP TABLE`, dữ liệu, trigger, và cả
+bảng `alembic_version`. Chép sang máy đích (USB, scp, thư mục chia sẻ), bỏ vào
+thư mục dự án rồi ở máy đó chạy:
+
+```bash
+./deploy.sh --skip-seed                      # dựng container, bỏ qua dữ liệu nền
+./deploy.sh --import-all backups/stock_system_full_20260905_1024.sql
+```
+
+Import mất khoảng 15 giây cho 40 MB, và tự in ra số dòng của `staff` / `users` /
+`symbols` / `ohlcv_daily` để đối chiếu.
+
+> `--import-all` **XOÁ TRẮNG** database đang có: file dump chứa `DROP TABLE` cho
+> từng bảng. Nếu schema đích đang có bảng, script bắt gõ đúng chữ `xoa` để xác
+> nhận. Thêm `--yes` để bỏ qua bước hỏi (dùng trong script tự động).
+
+Nguồn dump mặc định là MySQL máy dev (`127.0.0.1:3306`). Muốn chụp chính DB đang
+chạy trong Docker thì trỏ ngược vào nó:
+
+```bash
+DEV_DB_HOST=127.0.0.1 DEV_DB_PORT=3306 ./deploy.sh --dump-all
+```
+
+Cả file `--dump-all` lẫn `clone_accounts.sql` đều chứa hash mật khẩu, secret TOTP
+và email khách hàng thật — chép tay, không đẩy lên git, không gửi cho khách.
+
+### Chọn cách nào
+
+| Tình huống | Dùng |
+|---|---|
+| Máy khách dựng mới, không cần dữ liệu của bạn | `deploy.bat` là đủ |
+| Máy thứ hai của bạn, cần tài khoản + danh mục mã | chép `clone_accounts.sql` sang |
+| Máy thứ hai cần **giống hệt**, cả lịch sử giá | `--dump-all` rồi `--import-all` |
 
 ### Cờ hay dùng của deploy.sh
 
@@ -529,7 +566,10 @@ docker compose --env-file .env.docker exec -T db mysql -uroot -p stock_system < 
 | `--skip-build` | Dùng lại image cũ, chỉ dựng lại container |
 | `--skip-migrate` | Bỏ `alembic upgrade head` |
 | `--skip-seed` | Bỏ cả seed lẫn hai file `.sql` |
-| `--dump-clone` | Chỉ sinh lại hai file `.sql` từ MySQL máy dev rồi thoát |
+| `--dump-clone` | Chỉ sinh lại hai file `.sql` dữ liệu nền từ MySQL máy dev rồi thoát |
+| `--dump-all` | Dump trọn vẹn database ra một file `.sql` rồi thoát |
+| `--import-all F` | Nạp file đó vào MySQL trong Docker (xoá dữ liệu đang có) |
+| `--yes` | Bỏ qua câu hỏi xác nhận của `--import-all` |
 | `--db-only` | Chỉ dựng MySQL |
 | `--logs` | Bám log sau khi healthy |
 

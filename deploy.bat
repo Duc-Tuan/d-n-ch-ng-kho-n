@@ -23,6 +23,13 @@ REM    deploy.bat --dump-clone    dump lai file .sql do tu MySQL may dev
 REM                               (127.0.0.1:3306) roi thoat, khong deploy
 REM    deploy.bat --skip-seed     bo qua ca hai buoc tren
 REM
+REM  Be du lieu sang may khac:
+REM    deploy.bat --dump-all      dump tron ven database ra 1 file .sql
+REM                               (backups\stock_system_full_<ngay>.sql, ~40 MB)
+REM    deploy.bat --import-all backups\stock_system_full_20260905_1024.sql
+REM                               nap file do vao MySQL trong Docker.
+REM                               XOA TRANG du lieu dang co - script se hoi lai.
+REM
 REM  Thieu buoc do thi alembic chi tao bang rong: bang staff khong co dong nao
 REM  nen moi lan dang nhap deu tra ve 401.
 REM ============================================================

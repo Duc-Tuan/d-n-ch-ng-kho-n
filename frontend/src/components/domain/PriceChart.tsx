@@ -31,7 +31,7 @@ import {
 } from 'lightweight-charts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Button, Icon } from '@/components/ui';
+import { Button, Icon, IconButton } from '@/components/ui';
 import { useIsMobile } from '@/hooks';
 import { CUSTOMER, api } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -101,6 +101,7 @@ export function PriceChart({
   const size = useElementSize(hostRef);
 
   const [range, setRange] = useState('1y');
+  const [fullscreen, setFullscreen] = useState(false);
   const [candles, setCandles] = useState<Candle[]>(initialCandles);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
@@ -122,6 +123,60 @@ export function PriceChart({
     setCandles(initialCandles);
     setExhausted(false);
   }, [initialCandles, symbol]);
+
+  /* ── Toàn màn hình ─────────────────────────────────────────────────────── */
+
+  /**
+   * Xin toàn màn hình **của cả trang** (`documentElement`) chứ không của riêng khung biểu đồ.
+   *
+   * Modal chọn chỉ báo render qua portal gắn vào `<body>`, tức nằm ngoài khung biểu đồ. Nếu
+   * phần tử toàn màn hình là khung đó, trình duyệt chỉ vẽ phần tử ấy và cây con của nó — bấm
+   * "Chỉ báo" sẽ không thấy gì hiện ra.
+   *
+   * Trình duyệt có thể từ chối (Safari trên iPhone không cho phần tử thường vào toàn màn hình).
+   * Lúc đó vẫn còn lớp phủ `fixed inset-0` bên dưới, nên biểu đồ vẫn chiếm trọn khung nhìn,
+   * chỉ là thanh trình duyệt còn đó.
+   */
+  useEffect(() => {
+    if (!fullscreen) return;
+
+    document.documentElement.requestFullscreen?.()?.catch(() => {});
+
+    // Người dùng có thể thoát toàn màn hình bằng Esc hay F11 mà không qua nút của mình —
+    // phải nghe lại để lớp phủ đóng theo, không thì màn hình kẹt ở trạng thái nửa vời.
+    const onChange = () => {
+      if (!document.fullscreenElement) setFullscreen(false);
+    };
+    document.addEventListener('fullscreenchange', onChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    };
+  }, [fullscreen]);
+
+  // Esc để thoát — nhưng nhường cho modal đang mở, vì Esc của nó phải đóng modal trước.
+  useEffect(() => {
+    if (!fullscreen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !pickerOpen && !settingsId) setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fullscreen, pickerOpen, settingsId]);
+
+  // Khoá cuộn nền: lớp phủ che kín rồi, để trang phía sau cuộn được chỉ gây trôi vị trí khi thoát.
+  useEffect(() => {
+    if (!fullscreen) return;
+
+    const { body } = document;
+    const previous = body.style.overflow;
+    body.style.overflow = 'hidden';
+    return () => {
+      body.style.overflow = previous;
+    };
+  }, [fullscreen]);
 
   /** YC9 — tải thêm nến cũ hơn nến sớm nhất đang có. */
   const loadOlder = useCallback(async () => {
@@ -313,6 +368,12 @@ export function PriceChart({
     if (size.width) chartRef.current?.applyOptions({ width: size.width });
   }, [size.width]);
 
+  // Chiều cao cũng lấy từ khung chứa, không chỉ từ prop `height`: lúc toàn màn hình khung được
+  // kéo giãn bằng CSS (`flex-1`) nên prop không đổi, mà biểu đồ thì phải cao lên theo.
+  useEffect(() => {
+    if (size.height) chartRef.current?.applyOptions({ height: size.height });
+  }, [size.height]);
+
   useEffect(() => {
     chartRef.current?.applyOptions({ timeScale: { visible: !lastVisiblePane } });
   }, [lastVisiblePane]);
@@ -421,9 +482,19 @@ export function PriceChart({
     indicators.indicators.find((item) => item.instanceId === settingsId) ?? null;
 
   return (
-    <div className="space-y-3">
+    <div
+      className={cn(
+        'space-y-3',
+        fullscreen && 'fixed inset-0 z-50 flex flex-col bg-surface p-3 sm:p-4',
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1">
+          {/* Ra khỏi trang thì mất luôn phần đầu thẻ ghi mã đang xem — nhắc lại ở đây. */}
+          {fullscreen && symbol && (
+            <span className="mr-2 text-base font-semibold text-ink-900">{symbol}</span>
+          )}
+
           {RANGES.map((item) => (
             <button
               key={item.key}
@@ -467,11 +538,29 @@ export function PriceChart({
               {exhausted && ' · đã tải hết lịch sử'}
             </>
           )}
+
+          <IconButton
+            size="sm"
+            variant="outline"
+            label={fullscreen ? 'Thu nhỏ biểu đồ (Esc)' : 'Phóng to toàn màn hình'}
+            onClick={() => setFullscreen((on) => !on)}
+          >
+            <Icon name={fullscreen ? 'minimize' : 'maximize'} size={16} />
+          </IconButton>
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-ink-200">
-        <div ref={hostRef} className="relative w-full" style={{ height }}>
+      <div
+        className={cn(
+          'overflow-hidden rounded-lg border border-ink-200',
+          fullscreen && 'flex min-h-0 flex-1 flex-col',
+        )}
+      >
+        <div
+          ref={hostRef}
+          className={cn('relative w-full', fullscreen && 'min-h-0 flex-1')}
+          style={fullscreen ? undefined : { height }}
+        >
           <div ref={containerRef} className="absolute inset-0" />
 
           {/* Nhãn các chỉ báo vẽ đè: tên, và nút chỉnh ngay tại chỗ đang nhìn thấy đường đó. */}

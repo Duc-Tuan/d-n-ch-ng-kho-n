@@ -62,6 +62,8 @@ export type IconName =
   | 'star'
   | 'filter'
   | 'external'
+  | 'maximize'
+  | 'minimize'
   | 'dashboard'
   | 'trending-up'
   | 'trending-down'
@@ -202,6 +204,8 @@ const PATHS: Record<IconName, React.ReactNode> = {
   star: <path d="m12 3.5 2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8-5.4 2.8 1-6L3.3 9.9l6-.9z" />,
   filter: <path d="M3 5h18l-7 8v6l-4 2v-8z" />,
   external: <path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  maximize: <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />,
+  minimize: <path d="M3 8h3a2 2 0 0 0 2-2V3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M21 16h-3a2 2 0 0 0-2 2v3" />,
   dashboard: (
     <>
       <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
