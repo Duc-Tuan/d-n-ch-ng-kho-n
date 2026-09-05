@@ -10,6 +10,8 @@
 #   ./deploy.sh --skip-migrate   # bỏ qua `alembic upgrade head`
 #   ./deploy.sh --skip-seed      # bỏ qua nạp dữ liệu nền (clone SQL + seed.py)
 #   ./deploy.sh --dump-clone     # chỉ dump lại file clone từ MySQL máy dev rồi thoát
+#   ./deploy.sh --dump-all       # dump TRỌN VẸN database ra 1 file .sql để bê sang máy khác
+#   ./deploy.sh --import-all F   # nạp file đó vào MySQL trong Docker (XOÁ dữ liệu đang có)
 #   ./deploy.sh --skip-build     # dùng lại image cũ, chỉ dựng lại container
 #   ./deploy.sh --db-only        # chỉ dựng MySQL, không đụng tới ứng dụng
 #   ./deploy.sh --prune          # xoá luôn image mồ côi (dangling) sau khi build
@@ -68,6 +70,9 @@ NO_CACHE=""
 SKIP_MIGRATE=0
 SKIP_SEED=0
 DUMP_CLONE=0
+DUMP_ALL=0
+IMPORT_ALL=""
+ASSUME_YES=0
 SKIP_BUILD=0
 DB_ONLY=0
 PRUNE=0
@@ -79,12 +84,15 @@ while [ $# -gt 0 ]; do
     --skip-migrate) SKIP_MIGRATE=1 ;;
     --skip-seed)    SKIP_SEED=1 ;;
     --dump-clone)   DUMP_CLONE=1 ;;
+    --dump-all)     DUMP_ALL=1 ;;
+    --import-all)   IMPORT_ALL="${2:?--import-all cần đường dẫn file .sql}"; shift ;;
+    --yes|-y)       ASSUME_YES=1 ;;
     --skip-build)   SKIP_BUILD=1 ;;
     --db-only)      DB_ONLY=1 ;;
     --prune)        PRUNE=1 ;;
     --logs)         FOLLOW_LOGS=1 ;;
     --tag)          TAG="${2:?--tag cần một giá trị, ví dụ: --tag 1.2}"; shift ;;
-    -h|--help)      sed -n '3,20p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help)      sed -n '3,22p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *)              echo "Tham số lạ: $1 (dùng --help)" >&2; exit 2 ;;
   esac
   shift
@@ -205,6 +213,79 @@ if [ "$DUMP_CLONE" -eq 1 ]; then
   echo
   echo "  $SYMBOLS_SQL vào git — nhớ commit."
   echo "  $CLONE_SQL KHÔNG vào git (hash mật khẩu, email khách) — chép tay khi đổi máy."
+  exit 0
+fi
+
+# ── 1c. Dump trọn vẹn database ra một file rồi thoát ─────────────────────────
+# Khác `--dump-clone` ở chỗ: file này là BẢN SAO Y HỆT, kèm CREATE TABLE, DROP
+# TABLE, trigger, và cả `alembic_version` — dùng khi bê toàn bộ hệ thống sang
+# máy khác chứ không phải để vá dữ liệu nền vào một DB đã dựng sẵn.
+#
+# Nguồn mặc định là MySQL máy dev. Muốn chụp chính DB trong Docker thì trỏ ngược
+# vào nó (trong container mysql, 127.0.0.1:3306 là chính nó):
+#     DEV_DB_HOST=127.0.0.1 DEV_DB_PORT=3306 ./deploy.sh --dump-all
+if [ "$DUMP_ALL" -eq 1 ]; then
+  out="backups/${DB_NAME_VALUE}_full_$(date +%Y%m%d_%H%M).sql"
+  step "Dump trọn vẹn '$DB_NAME_VALUE' từ $DEV_DB_HOST:$DEV_DB_PORT → $out"
+  [ "$(docker inspect -f '{{.State.Status}}' "$DB_CONTAINER" 2>/dev/null || echo gone)" = "running" ] \
+    || die "Container '$DB_CONTAINER' không chạy. Chạy './deploy.sh --db-only' trước."
+
+  mkdir -p backups
+
+  # --quick: đổ từng dòng một thay vì nạp cả bảng vào RAM. Bảng ohlcv_daily có
+  #          nửa triệu dòng, thiếu cờ này là mysqldump ăn hết bộ nhớ container.
+  # --databases: sinh kèm CREATE DATABASE + USE, nên lúc import không cần chỉ tên
+  #          schema — bớt một chỗ gõ sai.
+  # --add-drop-table: import là thay thế sạch, không chồng lên dữ liệu cũ.
+  # --triggers: schema này có 1 trigger; mặc định đã bật, ghi rõ cho khỏi quên.
+  dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" mysqldump \
+    -h "$DEV_DB_HOST" -P "$DEV_DB_PORT" -u "$DEV_DB_USER" \
+    --databases "$DB_NAME_VALUE" \
+    --single-transaction --quick --add-drop-table --triggers --routines \
+    --no-tablespaces --set-gtid-purged=OFF --default-character-set=utf8mb4 \
+    > "$out" \
+    || die "mysqldump thất bại — MySQL có chạy ở $DEV_DB_HOST:$DEV_DB_PORT không?"
+
+  [ -s "$out" ] || { rm -f "$out"; die "mysqldump trả về rỗng."; }
+
+  echo "  $(du -h "$out" | cut -f1)  ($(grep -c 'INSERT INTO' "$out") câu INSERT)"
+  echo
+  echo "  Bê file này sang máy khác, đặt vào thư mục dự án, rồi ở máy đó chạy:"
+  echo "      ./deploy.sh --skip-seed          # dựng container + schema, chưa cần dữ liệu nền"
+  echo "      ./deploy.sh --import-all $out"
+  echo
+  warn "File có hash mật khẩu, secret TOTP, email khách hàng — chép tay, đừng đẩy lên git."
+  exit 0
+fi
+
+# ── 1d. Nạp một file dump trọn vẹn vào MySQL trong Docker ────────────────────
+# XOÁ TRẮNG dữ liệu đang có: file dump chứa DROP TABLE cho từng bảng.
+if [ -n "$IMPORT_ALL" ]; then
+  step "Nạp $IMPORT_ALL vào '$DB_NAME_VALUE' trong container '$DB_CONTAINER'"
+  [ -f "$IMPORT_ALL" ] || die "Không thấy file $IMPORT_ALL."
+  [ "$(docker inspect -f '{{.State.Status}}' "$DB_CONTAINER" 2>/dev/null || echo gone)" = "running" ] \
+    || die "Container '$DB_CONTAINER' không chạy. Chạy './deploy.sh --db-only' trước."
+
+  existing="$(dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" \
+    mysql -N -B -u root -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$DB_NAME_VALUE'" 2>/dev/null | tr -d '\r' || echo 0)"
+
+  if [ "${existing:-0}" -gt 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
+    warn "Database '$DB_NAME_VALUE' đang có $existing bảng. File dump sẽ XOÁ và dựng lại toàn bộ."
+    printf 'Gõ đúng chữ "xoa" để tiếp tục: '
+    read -r answer </dev/tty || answer=""
+    [ "$answer" = "xoa" ] || die "Đã huỷ, không đụng gì tới database."
+  fi
+
+  dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" \
+    mysql -u root --default-character-set=utf8mb4 < "$IMPORT_ALL" \
+    || die "Nạp thất bại."
+
+  echo "  Xong. Kiểm nhanh:"
+  dc exec -T -e MYSQL_PWD="$DB_PASSWORD_VALUE" "$DB_SERVICE" mysql -u root "$DB_NAME_VALUE" -e \
+    "SELECT 'staff' bang, COUNT(*) so_dong FROM staff
+     UNION ALL SELECT 'users', COUNT(*) FROM users
+     UNION ALL SELECT 'symbols', COUNT(*) FROM symbols
+     UNION ALL SELECT 'ohlcv_daily', COUNT(*) FROM ohlcv_daily"
   exit 0
 fi
 
