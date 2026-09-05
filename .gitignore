@@ -1,0 +1,50 @@
+# ── Hệ điều hành / IDE ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ── Script chạy tay trên máy Windows ─────────────────────────────────────────
+# Chỉ phục vụ máy dev, không dùng khi triển khai bằng Docker.
+*.bat
+*.cmd
+*.ps1
+
+# ── Thư mục không đẩy lên remote ──────────────────────────────────────────────
+# Dấu "/" ở đầu neo vào thư mục gốc: không đụng tới `backend/app/scripts/`
+# và `backend/app/data/` là mã nguồn thật.
+/docs/
+/scripts/
+/backups/
+
+# ── Bí mật ────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.local.example
+secrets/
+*.key
+*.pem
+
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / Next.js ────────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Dữ liệu và file người dùng tải lên ───────────────────────────────────────
+storage/
+*.db
+*.sqlite3
+*.sql
+*.log

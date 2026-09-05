@@ -1,0 +1,19 @@
+# Bí mật — tuyệt đối không commit (BR-881)
+.env
+secrets/
+*.key
+*.pem
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Dữ liệu và file người dùng tải lên
+storage/
+*.db
+*.sqlite3
+
+# Sao lưu
+backups/

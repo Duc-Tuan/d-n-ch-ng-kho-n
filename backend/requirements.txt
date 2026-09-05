@@ -1,0 +1,29 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+SQLAlchemy==2.0.36
+alembic==1.14.0
+PyMySQL==1.1.1
+cryptography==44.0.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.20
+email-validator==2.2.0
+pyotp==2.9.0
+qrcode[pil]==8.0
+APScheduler==3.11.0
+httpx==0.28.1
+google-api-python-client==2.157.0
+google-auth==2.37.0
+Jinja2==3.1.5
+python-slugify==8.0.4
+pypdf==5.1.0
+reportlab==4.2.5
+nh3==0.2.20
+# MCP server cho phân tích hằng ngày (`app/mcp/server.py`).
+# Ghim 1.9.4 chứ không lấy bản mới nhất: từ 1.2x, `mcp` kéo theo starlette 1.x và pydantic 2.13,
+# cả hai đều xung đột với fastapi 0.115.6 ở trên. Ta chỉ dùng transport stdio nên không cần
+# tính năng mới nào của các bản sau.
+mcp==1.9.4

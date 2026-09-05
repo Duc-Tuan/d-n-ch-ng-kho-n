@@ -1,0 +1,19 @@
+# Chuẩn hoá xuống dòng khi commit
+* text=auto eol=lf
+
+# Script Windows BẮT BUỘC dùng CRLF — cmd.exe phân tích sai file chỉ có LF,
+# gây lỗi kiểu 'M' is not recognized as an internal or external command.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# File nhị phân — không đụng vào
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.db binary

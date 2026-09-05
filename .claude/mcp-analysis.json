@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "stock-analysis": {
+      "command": "D:\\mt5\\stock_tracking\\code product\\my-stock-system\\backend\\.venv\\Scripts\\python.exe",
+      "args": [
+        "D:\\mt5\\stock_tracking\\code product\\my-stock-system\\backend\\app\\mcp\\server.py"
+      ],
+      "cwd": "D:\\mt5\\stock_tracking\\code product\\my-stock-system\\backend",
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "D:\\mt5\\stock_tracking\\code product\\my-stock-system\\backend"
+      }
+    }
+  }
+}

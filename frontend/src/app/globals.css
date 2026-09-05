@@ -1,0 +1,487 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  ==========================================================================================
+  BẢNG MÀU
+  ==========================================================================================
+  Hai bản giá trị cho cùng một bộ tên. `data-theme` trên <html> chọn bản nào — script trong
+  `app/layout.tsx` đặt nó **trước khi trang vẽ lần đầu**, nên không có cú chớp trắng khi tải.
+
+  Mặc định (không có `data-theme`) là bản sáng: site quản trị dùng nó, và nếu script vì lý do
+  nào đó không chạy thì trang vẫn đọc được chứ không trắng chữ trên nền trắng.
+
+  Viết dạng ba số RGB rời chứ không phải mã hex, để Tailwind ghép được `bg-surface/70`.
+  ==========================================================================================
+*/
+@layer base {
+  :root {
+    color-scheme: light;
+
+    --canvas: 247 247 248;
+    --surface: 255 255 255;
+    --surface-raised: 255 255 255;
+    --surface-sunken: 247 247 248;
+
+    --ink-50: 247 247 248;
+    --ink-100: 238 238 240;
+    --ink-200: 217 217 222;
+    --ink-300: 184 184 192;
+    --ink-400: 143 143 155;
+    --ink-500: 113 113 127;
+    --ink-600: 90 90 103;
+    --ink-700: 74 74 84;
+    --ink-800: 63 63 71;
+    --ink-900: 39 39 44;
+    --ink-950: 24 24 27;
+
+    --line: 217 217 222;
+    --line-strong: 184 184 192;
+
+    --primary: 39 39 44;
+    --primary-fg: 250 250 251;
+    --primary-hover: 63 63 71;
+    --primary-active: 24 24 27;
+
+    --danger: 220 38 38;
+    --danger-fg: 255 255 255;
+    --danger-hover: 185 28 28;
+    --danger-active: 153 27 27;
+
+    --inverted: 39 39 44;
+    --inverted-fg: 250 250 251;
+
+    --brand: 31 99 220;
+    --brand-fg: 255 255 255;
+    --brand-soft: 232 238 252;
+    --brand-hover: 26 86 196;
+
+    --tone-gray-bg: 238 238 240;
+    --tone-gray-fg: 74 74 84;
+    --tone-gray-line: 217 217 222;
+    --tone-blue-bg: 239 246 255;
+    --tone-blue-fg: 29 78 216;
+    --tone-blue-line: 191 219 254;
+    --tone-green-bg: 240 253 244;
+    --tone-green-fg: 21 128 61;
+    --tone-green-line: 187 247 208;
+    --tone-amber-bg: 255 251 235;
+    --tone-amber-fg: 180 83 9;
+    --tone-amber-line: 253 230 138;
+    --tone-red-bg: 254 242 242;
+    --tone-red-fg: 185 28 28;
+    --tone-red-line: 254 202 202;
+    --tone-cyan-bg: 236 254 255;
+    --tone-cyan-fg: 14 116 144;
+    --tone-cyan-line: 165 243 252;
+    --tone-purple-bg: 250 245 255;
+    --tone-purple-fg: 126 34 206;
+    --tone-purple-line: 233 213 255;
+
+    --up: 22 163 74;
+    --down: 220 38 38;
+    --ref: 202 138 4;
+    --ceil: 168 85 247;
+    --floor: 8 145 178;
+
+    --shadow-card: 0 1px 2px 0 rgb(24 24 27 / 0.05);
+    --shadow-raised: 0 1px 3px 0 rgb(24 24 27 / 0.1), 0 1px 2px -1px rgb(24 24 27 / 0.1);
+    --shadow-pop: 0 10px 30px -10px rgb(24 24 27 / 0.25);
+  }
+
+  /*
+    Site khách hàng.
+
+    Thang xám không phải là bản đảo ngược của bản sáng. Đảo thẳng cho ra một giao diện xám xỉn:
+    ở nền tối mắt người nhạy hơn hẳn với chênh lệch độ sáng, nên các bậc dưới (nền, viền) phải
+    nhích rất chậm, còn các bậc chữ phải nhảy nhanh để đủ tương phản. Ba bậc `canvas` →
+    `surface` → `surface-raised` chỉ cách nhau vài phần trăm độ sáng: đó là cách phân tầng ở
+    nền tối, thay cho đổ bóng vốn gần như vô hình.
+  */
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+
+    --canvas: 9 9 11;
+    --surface: 20 20 23;
+    --surface-raised: 28 28 33;
+    --surface-sunken: 5 5 6;
+
+    --ink-50: 23 23 27;
+    --ink-100: 33 33 39;
+    --ink-200: 44 44 51;
+    --ink-300: 61 61 70;
+    --ink-400: 113 113 125;
+    --ink-500: 145 145 157;
+    --ink-600: 170 170 181;
+    --ink-700: 199 199 208;
+    --ink-800: 226 226 232;
+    --ink-900: 245 245 247;
+    --ink-950: 255 255 255;
+
+    --line: 44 44 51;
+    --line-strong: 61 61 70;
+
+    --primary: 47 111 235;
+    --primary-fg: 255 255 255;
+    --primary-hover: 62 124 245;
+    --primary-active: 37 96 210;
+
+    --danger: 225 62 68;
+    --danger-fg: 255 255 255;
+    --danger-hover: 235 82 88;
+    --danger-active: 200 48 54;
+
+    --inverted: 38 38 44;
+    --inverted-fg: 245 245 247;
+
+    --brand: 91 140 255;
+    --brand-fg: 9 9 11;
+    --brand-soft: 26 35 61;
+    --brand-hover: 122 163 255;
+
+    --tone-gray-bg: 39 39 45;
+    --tone-gray-fg: 199 199 208;
+    --tone-gray-line: 55 55 63;
+    --tone-blue-bg: 23 37 74;
+    --tone-blue-fg: 147 178 255;
+    --tone-blue-line: 37 58 110;
+    --tone-green-bg: 20 48 33;
+    --tone-green-fg: 110 231 158;
+    --tone-green-line: 30 74 50;
+    --tone-amber-bg: 56 42 14;
+    --tone-amber-fg: 252 211 108;
+    --tone-amber-line: 84 62 20;
+    --tone-red-bg: 61 26 28;
+    --tone-red-fg: 252 165 165;
+    --tone-red-line: 92 39 42;
+    --tone-cyan-bg: 18 48 56;
+    --tone-cyan-fg: 125 226 245;
+    --tone-cyan-line: 27 72 84;
+    --tone-purple-bg: 45 30 64;
+    --tone-purple-fg: 209 172 255;
+    --tone-purple-line: 66 44 94;
+
+    /* Sáng hơn bản ngày: #16a34a trên nền gần đen đọc như một vệt xám xanh. */
+    --up: 45 200 110;
+    --down: 248 90 96;
+    --ref: 234 179 8;
+    --ceil: 192 132 252;
+    --floor: 34 211 238;
+
+    --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+    --shadow-raised: 0 2px 6px -1px rgb(0 0 0 / 0.6), 0 1px 2px -1px rgb(0 0 0 / 0.5);
+    --shadow-pop: 0 20px 45px -15px rgb(0 0 0 / 0.75);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink-900 antialiased;
+    /* BR-825 — iOS Safari: thanh địa chỉ ăn chiều cao viewport, dùng dvh thay vh. */
+    min-height: 100dvh;
+    /* Bộ biến thể chữ cái của Inter dành cho giao diện — dạng chữ đơn giản hơn, dễ đọc hơn ở
+       cỡ nhỏ so với bộ mặc định vốn nghiêng về chữ in dài. */
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /*
+    Tiêu đề bó chữ lại. Mặc định của font là khoảng cách tối ưu cho cỡ chữ đọc (14–16px); giữ
+    nguyên khoảng đó ở cỡ 24–32px thì các chữ cái rời ra và tiêu đề mất đi cảm giác là một khối.
+  */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.018em;
+  }
+
+  /*
+    Số liệu tài chính luôn dùng chữ số cùng bề rộng, không phải chờ ai đó nhớ thêm class.
+    Bảng giá cập nhật mỗi hai phút: chữ số so le làm cả cột giật ngang mỗi lần một con số đổi.
+  */
+  table,
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  p {
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Viền focus thống nhất cho phần tử bấm được — nút, liên kết, tab.
+     Ở đó vòng sáng là dấu hiệu focus duy nhất, bỏ đi thì không điều hướng bằng bàn phím được. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ink-900 ring-offset-2;
+  }
+
+  /*
+    Ô nhập: **không có dấu hiệu focus dưới bất kỳ hình thức nào** — theo yêu cầu thiết kế.
+
+    Phải khai ở đây chứ không phải ở component. Quy tắc `:focus-visible` bên trên dùng `ring`,
+    mà `ring` của Tailwind là `box-shadow` chứ không phải `outline`; đặt `focus:outline-none`
+    trên từng ô nhập không hề chạm tới nó. Đó là lý do vòng sáng vẫn hiện ở mọi ô nhập trên cả
+    hai site dù component đã bỏ hết style focus.
+
+    `[role="combobox"]` để bắt cả `Select` và `SymbolCombobox` tự dựng — chúng là thẻ `button`
+    nhưng đứng ở vị trí một ô nhập trong biểu mẫu, nên phải trông giống các ô còn lại.
+  */
+  input:focus,
+  input:focus-visible,
+  textarea:focus,
+  textarea:focus-visible,
+  select:focus,
+  select:focus-visible,
+  [role='combobox']:focus,
+  [role='combobox']:focus-visible {
+    outline: none;
+    box-shadow: none;
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-shadow: 0 0 #0000;
+  }
+
+  /* Trừ ô đánh dấu: nó không có vùng nền để phân biệt, mất vòng sáng là mất hẳn dấu focus. */
+  input[type='checkbox']:focus-visible,
+  input[type='radio']:focus-visible {
+    @apply ring-2 ring-ink-900 ring-offset-2;
+  }
+}
+
+@layer components {
+  /*
+    Biểu mẫu đặt trên nền tối — hiện dùng ở màn đăng nhập Admin Site.
+
+    Chỉ xử lý **nhãn và dòng gợi ý**. Hai thứ đó do `Field` dựng bên trong component, nơi gọi
+    không với tới được; muốn đổi màu chúng qua props thì phải thêm một prop `onDark` rồi luồn
+    qua `Field`, `Input`, `Textarea`, `Select`, `PasswordInput` và mọi nơi dùng chúng — quá nhiều
+    thay đổi lên API dùng chung để phục vụ đúng một màn hình.
+
+    Phần **ô nhập** thì ngược lại: truyền thẳng `className` ở nơi gọi. Chọn cách đó không phải
+    vì gọn hơn mà vì nó **chạy đúng**: `cn()` dùng tailwind-merge nên class truyền vào thay thế
+    hẳn `bg-white`/`border-ink-300` mặc định. Còn quy tắc CSS ở đây có cùng độ đặc hiệu với class
+    Tailwind, mà `@layer utilities` xếp sau `@layer components`, nên utility luôn thắng — đó
+    chính là lý do bản đầu ô nhập vẫn trắng dù quy tắc đã được viết.
+
+    Không đụng `[role=alert]`: thông báo lỗi giữ nguyên màu đỏ trên mọi nền.
+  */
+  .form-on-dark label {
+    @apply text-ink-200;
+  }
+
+  .form-on-dark p:not([role='alert']) {
+    @apply text-ink-400;
+  }
+
+  /* Mục 11.2 — cỡ chữ đọc nội dung tối thiểu 16px, chiều cao dòng 1.6. */
+  .prose-article {
+    @apply text-article text-ink-800;
+  }
+
+  .prose-article h2 {
+    @apply mt-6 mb-2 text-lg font-semibold text-ink-900;
+  }
+
+  .prose-article h3 {
+    @apply mt-5 mb-2 text-base font-semibold text-ink-900;
+  }
+
+  .prose-article ul {
+    @apply mb-4 list-disc space-y-1 pl-5;
+  }
+
+  .prose-article ol {
+    @apply mb-4 list-decimal space-y-1 pl-5;
+  }
+
+  .prose-article a {
+    @apply font-medium text-ink-900 underline underline-offset-2;
+  }
+
+  /* `h-auto` là bắt buộc, không phải trang trí: bài viết lưu chiều rộng ảnh bằng thuộc tính
+     `width`. Trên màn hẹp, `max-w-full` co chiều rộng lại nhưng chiều cao vẫn giữ nguyên con số
+     trình duyệt suy ra từ `width` ban đầu — ảnh méo. `h-auto` buộc tính lại theo tỉ lệ gốc. */
+  .prose-article img {
+    @apply my-4 h-auto max-w-full rounded-lg;
+  }
+
+  /* Trong trình soạn thảo, ảnh nằm trong lớp bọc của node view (để đặt tay cầm kéo giãn). Lề dồn
+     ra lớp bọc, nếu không ảnh và lớp bọc cùng có lề và khoảng cách bị nhân đôi. */
+  .prose-article .rte-image {
+    @apply my-4;
+  }
+
+  .prose-article .rte-image img {
+    @apply my-0;
+  }
+
+  .prose-article table {
+    @apply my-4 w-full border-collapse text-sm;
+  }
+
+  .prose-article th,
+  .prose-article td {
+    @apply border border-ink-200 px-3 py-2;
+  }
+
+  .prose-article th {
+    @apply bg-ink-50 font-medium;
+  }
+
+  .prose-article blockquote {
+    @apply my-4 border-l-2 border-ink-300 pl-4 italic text-ink-600;
+  }
+
+  .prose-article code {
+    @apply rounded bg-ink-100 px-1 py-0.5 text-sm;
+  }
+
+  /* Thanh cuộn mảnh, hợp với tông xám — mặc định của Windows quá dày và chói. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--ink-300)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full border-[3px] border-solid border-transparent bg-ink-300 bg-clip-content;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink-400 bg-clip-content;
+  }
+
+  /* Số liệu tài chính căn cột thẳng hàng — chữ số cùng bề rộng. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Bộ dựng điều kiện chiến lược.
+     Dùng container query chứ không phải breakpoint: bộ dựng nằm trong cột hẹp ở màn Bộ lọc phân
+     tích, mà `sm:`/`lg:` của Tailwind đo bề rộng **cửa sổ**, không biết cột đang hẹp. Kết quả là
+     bốn ô bị nhồi vào một cột ~28rem, chữ bị cắt và ô cuối tụt hàng. */
+  .rule-condition {
+    container-type: inline-size;
+  }
+
+  @container (min-width: 44rem) {
+    .rule-condition-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(11rem, auto) minmax(0, 1fr);
+      align-items: end;
+    }
+
+    /* Phép so sánh một vế (tăng dần / giảm dần) không có vế phải nên chỉ chia hai cột. */
+    .rule-condition-grid.rule-condition-unary {
+      grid-template-columns: minmax(0, 1fr) minmax(11rem, auto);
+    }
+  }
+}
+
+@layer utilities {
+
+  /* Chừa chỗ cho thanh dưới + vùng an toàn của iPhone (BR-826). */
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  .mb-bottom-nav {
+    margin-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@layer components {
+  /*
+    Bổ sung cho `.prose-article`.
+
+    Quy tắc `p { margin: 0 }` ở lớp base áp cho mọi thẻ đoạn trên toàn site — cần thiết cho giao
+    diện ứng dụng, nhưng với một bài viết dài thì các đoạn dính liền nhau thành một khối chữ đặc.
+    Trả lại khoảng cách đoạn ở đây chứ không bỏ quy tắc base, để chỉ vùng nội dung bị ảnh hưởng.
+  */
+  .prose-article p {
+    @apply mb-4;
+  }
+
+  .prose-article > :first-child {
+    @apply mt-0;
+  }
+
+  .prose-article > :last-child {
+    @apply mb-0;
+  }
+
+  .prose-article h2 {
+    @apply mt-8 mb-3 text-xl font-semibold tracking-tight;
+  }
+
+  .prose-article h3 {
+    @apply mt-6 mb-2 text-[1.0625rem] font-semibold;
+  }
+
+  /* Mục lục cuộn tới tiêu đề bằng neo `#id`; chừa chỗ cho thanh điều hướng dính, nếu không
+     tiêu đề nằm khuất ngay dưới nó. */
+  .prose-article :is(h2, h3) {
+    scroll-margin-top: 6rem;
+  }
+
+  .prose-article strong {
+    @apply font-semibold text-ink-900;
+  }
+
+  .prose-article hr {
+    @apply my-8 border-t border-ink-200;
+  }
+
+  .prose-article li::marker {
+    @apply text-ink-400;
+  }
+
+  .prose-article figure {
+    @apply my-5;
+  }
+
+  .prose-article figcaption {
+    @apply mt-2 text-center text-sm text-ink-500;
+  }
+
+  /* Bảng rộng hơn cột chữ thì cuộn ngang trong lớp bọc do màn chi tiết bài viết chèn vào,
+     đừng đẩy cả trang trôi ngang. */
+  .prose-article .table-scroll {
+    @apply my-4 max-w-full overflow-x-auto;
+  }
+
+  .prose-article .table-scroll > table {
+    @apply my-0;
+  }
+
+  /* Cỡ chữ đọc dài — chỉ dùng ở màn chi tiết bài viết, không đụng tới trình soạn thảo. */
+  .prose-reading {
+    @apply text-[1.0625rem] leading-[1.75];
+  }
+
+  .prose-reading p {
+    @apply mb-5;
+  }
+
+  /* Đoạn mở đầu đậm hơn một chút, dẫn mắt vào bài. */
+  .prose-reading > p:first-child {
+    @apply text-[1.125rem] leading-[1.7] text-ink-700;
+  }
+}

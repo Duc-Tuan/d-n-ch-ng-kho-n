@@ -1,0 +1,64 @@
+# Mọi thứ ở đây bị loại khỏi build context. Context nhỏ = `docker build` nhanh,
+# và quan trọng hơn: bí mật không lọt vào layer của ảnh.
+
+# ── Bí mật — KHÔNG BAO GIỜ nướng vào ảnh ─────────────────────────────────────
+# Cấu hình thật truyền lúc chạy: `docker run --env-file backend/.env`.
+.env
+.env.*
+**/.env
+**/.env.*
+**/secrets/
+*.key
+*.pem
+*.p12
+
+# ── Phụ thuộc và sản phẩm build của máy dev ──────────────────────────────────
+# Ảnh tự cài lại từ đầu; node_modules của Windows chứa binary sai nền tảng.
+**/node_modules/
+**/.venv/
+**/venv/
+**/.next/
+**/out/
+**/__pycache__/
+**/*.py[cod]
+**/*.tsbuildinfo
+
+# ── Không liên quan tới lúc chạy ─────────────────────────────────────────────
+docs/
+scripts/
+backups/
+backend/tests/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+*.bat
+*.cmd
+*.ps1
+README.md
+*.md
+
+# ── Dữ liệu ──────────────────────────────────────────────────────────────────
+# `storage/` gắn bằng volume lúc chạy, `demo.db` chỉ dùng cho bản demo cục bộ.
+**/storage/
+*.db
+*.sqlite3
+*.sql
+*.log
+
+# ── Công cụ / IDE ────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+.github/
+.claude/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ── Chính hai file này ───────────────────────────────────────────────────────
+Dockerfile
+.dockerignore
+
+# Script tiện ích chạy ở máy dev/server, không cần trong image.
+*.sh

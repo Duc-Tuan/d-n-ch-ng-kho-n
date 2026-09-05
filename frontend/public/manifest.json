@@ -1,0 +1,13 @@
+{
+  "name": "Hệ thống tư vấn chứng khoán",
+  "short_name": "Tư vấn CK",
+  "description": "Thông tin, công cụ và tài liệu tham khảo cho nhà đầu tư",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#09090b",
+  "theme_color": "#1f63dc",
+  "lang": "vi",
+  "icons": []
+}

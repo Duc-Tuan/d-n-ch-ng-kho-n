@@ -1,0 +1,81 @@
+# Dựng cả MySQL lẫn ứng dụng bằng một lệnh.
+#
+#   ./deploy.sh          # đường chính: lọc .env, build, up, chờ healthy, migrate
+#
+# Chạy tay (khi cần soi từng bước) — nhớ luôn kèm --env-file:
+#   docker compose --env-file .env.docker up -d --build
+#   docker compose --env-file .env.docker exec -w /app/backend app alembic upgrade head
+#
+# Vì sao vẫn phải dùng .env.docker chứ không trỏ thẳng backend/.env:
+# file gốc có ~26 dòng dạng `KEY=value   # giải thích`, và cả `docker run
+# --env-file` lẫn phần thay thế biến `${...}` của compose đều không đáng tin khi
+# cắt chú thích cuối dòng. deploy.sh đã có sẵn bước lọc — dùng lại kết quả đó.
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: stock-mysql
+    restart: unless-stopped
+    # utf8mb4 để khớp charset trong DSN (app/core/config.py).
+    # default-time-zone dùng dạng offset chứ không dùng "Asia/Ho_Chi_Minh": ảnh
+    # mysql không nạp sẵn bảng múi giờ, đặt tên vùng sẽ làm server không khởi động.
+    # Cần cho các cột server_default=func.now() trong app/models/base.py.
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-time-zone=+07:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD chua co trong .env.docker}
+      MYSQL_DATABASE: ${DB_NAME:-stock_system}
+    volumes:
+      # Dữ liệu MySQL — KHÔNG BAO GIỜ xoá volume này khi dựng lại.
+      - mysql_data:/var/lib/mysql
+      # KHÔNG mount backups/ vào /docker-entrypoint-initdb.d: thư mục đó chứa
+      # bản dump cũ (trước khi đổi nguồn giá sang VPS), nạp tự động sẽ dựng lại
+      # dữ liệu sai. Nạp dữ liệu thật bằng tay — xem phần "Chuyển dữ liệu" trong
+      # README/hướng dẫn: mysqldump từ MySQL máy dev rồi đổ vào qua `exec -T db`.
+    ports:
+      # 3307 chứ không 3306: máy dev đang chạy MySQL thật ở 3306, trùng cổng thì
+      # container không lên được. Chỉ mở trên loopback — không phơi DB ra mạng.
+      # Workbench/DBeaver: 127.0.0.1:3307. Bỏ hẳn khối này nếu không cần soi tay.
+      - "127.0.0.1:3307:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  app:
+    build: .
+    image: my-stock-system:latest
+    container_name: stock
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      # Đè lên DB_HOST trong .env.docker (đang là 127.0.0.1 — trong container đó
+      # là chính container app). `db` là tên service, compose tự phân giải DNS.
+      DB_HOST: db
+      DB_PORT: "3306"
+    depends_on:
+      db:
+        # Chờ MySQL nhận kết nối thật, không chỉ chờ container "đã chạy":
+        # lần khởi động đầu MySQL mất ~30s để khởi tạo data directory.
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+      - "8000:8000"
+    volumes:
+      - stock_storage:/app/backend/storage
+
+volumes:
+  mysql_data:
+    # Tên cứng, không phụ thuộc tên thư mục mã nguồn. deploy.sh dò đúng tên này để
+    # biết đây có phải lần đầu dựng DB hay không.
+    name: stock_mysql_data
+  stock_storage:
+    # Đặt tên cứng để trùng đúng volume deploy.sh đang dùng (file khách tải lên).
+    # Không đánh `external: true`: nếu chưa từng chạy deploy.sh thì compose tự tạo,
+    # còn nếu đã có sẵn thì dùng lại chính nó chứ không tạo bản mới.
+    name: stock_storage
