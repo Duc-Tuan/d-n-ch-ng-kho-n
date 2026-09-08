@@ -229,6 +229,79 @@ python -m app.scripts.backfill_ohlcv     # ~2,5 phút cho 150 mã, ~521k nến
   tắt theo dõi — tín hiệu đã gửi cho khách là dữ liệu bất biến, xoá mã đi thì màn tra cứu khiếu
   nại sẽ trống đúng lúc cần nhất.
 
+### Khung thời gian
+
+Biểu đồ vẽ được **11 khung** như TradingView: `1m` · `3m` · `5m` · `15m` · `30m` · `1h` · `2h` ·
+`4h` · `1D` · `1W` · `1M`. Nhưng nhà cung cấp chỉ phục vụ sáu khung, nên mỗi khung thuộc một
+trong hai loại (khai báo ở `app/services/market_data/timeframes.py`):
+
+| Loại | Khung | Nằm ở đâu |
+|---|---|---|
+| **Tải về** | `1m` `5m` `15m` `30m` `1h` | bảng `ohlcv_bars` |
+| **Tải về** | `1D` | bảng `ohlcv_daily` *(giữ nguyên chỗ cũ — chiến lược và backtest đọc nó)* |
+| **Gộp lúc đọc** | `3m` `2h` `4h` `1W` `1M` | không lưu, dựng lại từ khung gốc mỗi lần đọc |
+
+Gộp lúc đọc thay vì lưu thành bảng riêng là chủ ý: nến 4 giờ **luôn khớp** với nến 1 giờ mà
+người dùng đang nhìn. Lưu riêng thì hai chuỗi trôi khỏi nhau ngay lần đầu một mẻ đồng bộ chạy
+thiếu, và không có gì báo cho ai biết. Ô nến neo theo **nửa đêm giờ Việt Nam**, nên khung 4 giờ
+cho hai nến mỗi phiên (08:00 và 12:00) đúng như TradingView vẽ.
+
+#### Nguồn riêng cho nến trong ngày
+
+Nến ngày và nến trong ngày lấy từ **hai nguồn khác nhau**, khai báo tách ở `.env`:
+
+| | Nguồn | Vì sao |
+|---|---|---|
+| Nến ngày (`ohlcv_daily`) | `MARKET_DATA_PROVIDER=VPS` | Lịch sử tới **2000-07-28**, và đây là bảng chiến lược + backtest đọc |
+| Nến trong ngày (`ohlcv_bars`) | `MARKET_INTRADAY_PROVIDER=ENTRADE` | Sâu hơn VPS rất nhiều ở khung giờ |
+
+Đo ngày 08/09/2026 trên FPT — cùng một câu hỏi, hai câu trả lời rất khác nhau:
+
+| Khung | VPS | Entrade (DNSE) |
+|---|---|---|
+| `1m` | ~800 nến (4 phiên) | ~14.200 nến (từ 2026-06) |
+| `5m` | ~350 nến | ~2.900 nến |
+| `15m` | ~300 nến | ~1.000 nến |
+| `30m` | ~360 nến | ~570 nến |
+| **`1h`** | ~310 nến (3 tháng) | **~3.720 nến (từ 2023-09)** |
+
+Quan trọng hơn con số tổng là tính liền mạch: lịch sử `1h` của Entrade có 1.248 nến năm 2024 và
+1.245 nến năm 2025 — đúng một năm giao dịch đầy đủ. VNDIRECT nhìn qua cũng "sâu 5 năm" nhưng chỉ
+có 10–50 nến mỗi năm cho các năm cũ, tức là vài mẩu vụn chứ không phải lịch sử.
+
+> **Trộn hai nguồn ở đây có vi phạm BR-83x không?** Không. Điều luật đó cấm ghép hai nguồn áp
+> **hệ số điều chỉnh cổ tức khác nhau** — VPS và VNDIRECT lệch tới 16% trên cùng một phiên, đủ
+> để máy chạy chiến lược đọc thành tín hiệu. Entrade thì không: đối chiếu nến `1h` gộp lại với
+> nến ngày của VPS trên **5 mã × 745 phiên** cho lệch trung bình **0,004–0,03%**, lớn nhất
+> **0,11%**, và **không phiên nào quá 0,5%** — đó là sai số làm tròn (VPS trả 3 chữ số thập
+> phân, Entrade trả 2). Ngoài ra `ohlcv_bars` **chỉ phục vụ biểu đồ**; không chiến lược hay
+> backtest nào đọc nó.
+>
+> Muốn quay về một nguồn duy nhất thì để `MARKET_INTRADAY_PROVIDER` rỗng.
+
+> ⚠️ **Lịch sử trong ngày vẫn có trần, và không nạp bù được quá trần đó.** Mọi nguồn đều chỉ
+> phục vụ một **cửa sổ trượt**; Entrade rộng hơn VPS nhiều nhưng vẫn hữu hạn (khung `1m` khoảng
+> ba tháng). Xin xa hơn cửa sổ đó nhận về mảng rỗng. Nghĩa là phần sâu hơn **chỉ dày lên theo
+> thời gian** nhờ job chạy đều đặn — bỏ lỡ dài ngày là thủng một lỗ vĩnh viễn trên khung nhỏ.
+
+**Đổi nguồn thì lượt đồng bộ kế tiếp tự nạp lại trọn cửa sổ.** Đồng bộ tăng dần bám vào mốc
+`last_ts` của từng cặp (mã, khung); sau khi đổi nguồn thì mốc đó nói "đã có dữ liệu tới hôm qua"
+nên hệ thống chỉ xin thêm vài nến cuối và phần lịch sử sâu hơn của nguồn mới không bao giờ được
+hỏi tới — không lỗi, không cảnh báo, chỉ là biểu đồ vẫn nông y như cũ. Nên `sync_bars` đối chiếu
+nhà cung cấp đã ghi nến mới nhất: khác nguồn thì bỏ mốc và xin trọn cửa sổ đúng một lượt.
+
+Khoảng lịch sử xin cho mỗi khung lấy đúng bằng hạn giữ lại của khung đó (`retention_days` ở
+`market_data/timeframes.py`), nên xin về bao nhiêu là giữ bấy nhiêu, không tải thừa rồi dọn đi.
+
+Khung nào được tải mỗi phiên đặt ở `MARKET_INTRADAY_TIMEFRAMES`. Đây là chỗ đánh đổi giữa độ chi
+tiết và dung lượng — một phiên của 150 mã là ~43.000 nến `1m` nhưng chỉ ~750 nến `1h`; danh mục
+lớn mà máy chủ nhỏ thì bỏ `1m` ra trước tiên. Nến trong ngày quá hạn được dọn trong job
+`cleanup`, hạn của từng khung khai báo cùng chỗ với danh mục khung.
+
+Chạy tay ở Admin Site → *Dữ liệu thị trường → Đồng bộ giá tất cả mã*: tích khung cần tải rồi bấm.
+Mẻ đếm theo **lượt (mã × khung)**, nên chọn thêm một khung là nhân thêm chừng ấy thời gian.
+Bảng *Độ phủ theo khung thời gian* ngay bên dưới cho biết khung nào đang thủng.
+
 `app/data/symbol_universe.py` chỉ còn là **danh sách hạt giống** cho lần dựng hệ thống đầu tiên
 (`python -m app.scripts.sync_symbol_universe`). Sửa file đó không ảnh hưởng hệ thống đang chạy, và
 script chạy mặc định chỉ thêm mã còn thiếu chứ không đụng mã đã có. Cờ `--prune` khôi phục hành vi

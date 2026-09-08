@@ -122,8 +122,47 @@ class Settings(BaseSettings):
     # ---------- Dữ liệu thị trường (Phần 12) ----------
     #: BR-830 — đổi nhà cung cấp chỉ cần đổi giá trị này.
     market_data_provider: str = "VNDIRECT"
+
+    #: Nguồn riêng cho **nến trong ngày**. Bỏ trống thì dùng chung `market_data_provider`.
+    #:
+    #: Tách riêng vì hai loại nến có hai bài toán khác hẳn. Nến ngày cần lịch sử sâu và phải
+    #: khớp tuyệt đối với thứ chiến lược đang chạy (VPS đi tới 2000). Nến trong ngày thì nguồn
+    #: nào cũng chỉ giữ một cửa sổ gần đây, nhưng cửa sổ rộng hẹp rất khác nhau: đo ngày
+    #: 08/09/2026, khung 1 giờ của VPS có ~310 nến (3 tháng) còn Entrade có ~3.720 nến (từ
+    #: 2023-09) và liền mạch từng năm.
+    #:
+    #: Trộn nguồn ở đây **không** vi phạm BR-83x: điều luật đó cấm ghép hai nguồn áp hệ số điều
+    #: chỉnh cổ tức khác nhau (VPS và VNDIRECT lệch tới 16% trên cùng một phiên). Entrade đối
+    #: chiếu với VPS trên 5 mã × 745 phiên chỉ lệch trung bình 0,03% và tối đa 0,11% — sai số
+    #: làm tròn. Và nến ngày vẫn chỉ lấy từ nguồn chính: `ohlcv_bars` chỉ phục vụ biểu đồ, còn
+    #: `ohlcv_daily` — thứ chiến lược và backtest đọc — không đổi nguồn.
+    #:
+    #: Muốn quay lại dùng một nguồn duy nhất thì đặt rỗng.
+    market_intraday_provider: str = "ENTRADE"
+
     market_history_days: int = 730
     market_sync_delay_seconds: float = 0.25
+
+    #: Các khung trong ngày mà job `sync_market` tải về mỗi phiên, ngăn cách bằng dấu phẩy.
+    #:
+    #: Chỉ liệt kê khung **tự tải về** (1m, 5m, 15m, 30m, 1h) — 3m, 2h và 4h được gộp ra lúc
+    #: đọc nên khai báo ở đây cũng không có tác dụng gì. Bỏ trống thì hệ thống quay về đúng
+    #: hành vi cũ: chỉ đồng bộ nến ngày.
+    #:
+    #: Đây là chỗ đánh đổi giữa độ chi tiết và dung lượng: một phiên của 150 mã là ~43.000 nến
+    #: 1 phút nhưng chỉ ~750 nến 1 giờ. Danh mục lớn mà máy chủ nhỏ thì bỏ `1m` ra trước tiên.
+    market_intraday_timeframes: str = "1m,5m,15m,30m,1h"
+
+    #: Khoảng lịch sử xin cho một cặp (mã, khung) chưa có dữ liệu nào.
+    #:
+    #: Xin rộng hơn cũng vô ích: nguồn chỉ phục vụ một **cửa sổ trượt** vài trăm nến gần đây và
+    #: trả `no_data` cho mọi khoảng trong quá khứ (đã đo). Lịch sử trong ngày chỉ dày lên nhờ
+    #: chạy đều đặn, không nạp bù một lần cho xong như nến ngày.
+    market_intraday_history_days: int = 60
+
+    #: Dọn nến trong ngày quá hạn trong job `cleanup`. Hạn của từng khung khai báo ở
+    #: `market_data.timeframes` (`retention_days`). Tắt thì bảng cứ thế lớn mãi.
+    market_bar_retention_enabled: bool = True
     #: 16:00 thứ 2–6 — sau giờ đóng cửa (15:00) và sau khi sở công bố giá cuối phiên.
     #: Job vẫn tự bỏ qua ngày nghỉ lễ theo bảng `trading_calendar`.
     #: Viết `mon-fri` chứ **không** viết `1-5`: APScheduler đánh số 0=thứ 2 (khác cron Unix

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 
 
@@ -30,7 +30,12 @@ class SymbolInfo:
 
 @dataclass(slots=True)
 class Bar:
-    """Một nến. Giá theo đơn vị hiển thị của thị trường Việt Nam (nghìn đồng)."""
+    """Một nến. Giá theo đơn vị hiển thị của thị trường Việt Nam (nghìn đồng).
+
+    `ts` là mốc **mở** nến ở UTC, và nó chỉ có nghĩa với khung nhỏ hơn một ngày: nến 09:15 giờ
+    Việt Nam nằm ở 02:15 UTC. Nến ngày để trống `ts` — mốc của nó là `trade_date`, và nhà cung
+    cấp cũng chỉ trả về nửa đêm UTC cho mọi nến ngày chứ không phải một giờ có thật.
+    """
 
     trade_date: date
     open: Decimal
@@ -38,6 +43,14 @@ class Bar:
     low: Decimal
     close: Decimal
     volume: int
+    #: Thêm ở cuối và cho phép bỏ trống để mọi lời gọi `Bar(trade_date=…)` sẵn có vẫn đúng.
+    ts: datetime | None = None
+
+    def opened_at(self) -> datetime:
+        """Mốc mở nến, luôn có giá trị. Nến ngày quy về nửa đêm UTC của `trade_date`."""
+        if self.ts is not None:
+            return self.ts if self.ts.tzinfo else self.ts.replace(tzinfo=timezone.utc)
+        return datetime.combine(self.trade_date, time.min, tzinfo=timezone.utc)
 
     def is_valid(self) -> bool:
         """BR-835 — chặn dữ liệu hỏng ngay tại biên: giá bằng 0, khối lượng âm, cao/thấp ngược."""
@@ -64,6 +77,13 @@ class MarketDataProvider(ABC):
     #: Tên hiển thị, đồng thời là giá trị ghi vào cột `source` để biết dữ liệu từ đâu ra.
     name: str = "UNKNOWN"
 
+    #: Các mã `resolution` mà nguồn này thật sự phục vụ, theo cách gọi tên của chính nguồn.
+    #:
+    #: Khai báo chứ không thử rồi bắt lỗi: hỏi một khung không có thì VPS trả trạng thái rỗng
+    #: còn VNDIRECT trả "ok" kèm 0 nến — cả hai đều **không phân biệt được** với "mã này hôm nay
+    #: không giao dịch". Đồng bộ sẽ đếm đó là lỗi và màn vận hành đầy mã đỏ vô nghĩa.
+    supported_resolutions: frozenset[str] = frozenset({"D"})
+
     #: BR-836 — hiển thị "Nguồn dữ liệu: ..." dưới bảng giá và biểu đồ.
     #: Vừa là yêu cầu hợp đồng của nhiều nhà cung cấp, vừa tăng độ tin cậy với khách hàng.
     attribution: str = ""
@@ -75,6 +95,19 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def get_ohlcv(self, symbol: str, date_from: date, date_to: date) -> list[Bar]:
         """Giá lịch sử theo ngày, sắp xếp tăng dần theo thời gian."""
+
+    def get_bars(
+        self, symbol: str, start: datetime, end: datetime, resolution: str = "D"
+    ) -> list[Bar]:
+        """Nến ở một khung bất kỳ, sắp xếp tăng dần theo thời gian.
+
+        Tách khỏi `get_ohlcv` thay vì thêm tham số vào nó: `get_ohlcv` là hợp đồng nến ngày mà
+        cả chiến lược, backtest và các nguồn đã viết đang dựa vào, còn khung trong ngày cần mốc
+        chính xác tới phút nên nhận `datetime` chứ không phải `date`.
+        """
+        raise NotImplementedError(
+            f"{self.name} chưa hỗ trợ lấy nến theo khung thời gian tuỳ ý."
+        )
 
     def get_quote(self, symbol: str) -> dict | None:
         """Giá hiện tại. Chưa bắt buộc — bảng giá realtime thuộc giai đoạn sau."""

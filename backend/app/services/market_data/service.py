@@ -20,8 +20,14 @@ from sqlalchemy.orm import Session
 from app.core.datetime_utils import local_today, utcnow
 from app.core.exceptions import NotFound, ValidationError
 from app.models.market import MarketSyncLog, OhlcvDaily, Symbol
+from app.services.market_data import bars as bars_store
+from app.services.market_data import timeframes as tfs
 from app.services.market_data.base import Bar, MarketDataError, SymbolInfo
-from app.services.market_data.providers import get_provider
+from app.services.market_data.providers import (
+    get_intraday_provider,
+    get_provider,
+    intraday_provider_name,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,8 +60,9 @@ def sync_symbols(db: Session) -> dict:
     try:
         listed = {i.symbol: i for i in provider.list_symbols()}
     finally:
-        if hasattr(provider, "close"):
-            provider.close()
+        for handle in {id(provider): provider, id(intraday_provider): intraday_provider}.values():
+            if hasattr(handle, "close"):
+                handle.close()
 
     if not listed:
         # Nguồn lỗi trả rỗng mà vẫn chạy tiếp thì cả danh mục bị đánh dấu huỷ niêm yết.
@@ -285,6 +292,7 @@ def sync_ohlcv_batch(
     db: Session,
     symbols: list[str],
     *,
+    timeframes: list[str] | None = None,
     days: int = DEFAULT_HISTORY_DAYS,
     delay_seconds: float = 0.25,
     force_full: bool = False,
@@ -304,23 +312,49 @@ def sync_ohlcv_batch(
 
     `should_stop` — hỏi trước mỗi mã. Trả `True` thì dừng sạch: phần đã tải vẫn được ghi và mẻ
     vẫn có dòng nhật ký, chứ không biến mất như chưa từng chạy.
+
+    `timeframes` — các khung cần tải, mặc định chỉ nến ngày. Mẻ chạy theo **cặp (mã, khung)**,
+    và mọi con số đếm cũng tính theo cặp: một mã tải xong 4 trên 5 khung không phải là "đã xong",
+    và gộp nó thành một dòng thành công là giấu đi đúng cái khung đang hỏng. Khung suy ra
+    (3m, 2h, 4h, 1W, 1M) bị loại ngay từ đầu — chúng được gộp lúc đọc, không có gì để tải.
     """
     started = time.monotonic()
     today = local_today()
     provider = get_provider()
 
-    total = len(symbols)
+    # Nến trong ngày có thể lấy từ nguồn khác nến ngày — xem `market_intraday_provider`. Dựng
+    # provider thứ hai một lần cho cả mẻ, không phải mỗi lượt: mỗi lần dựng là một pool kết nối
+    # HTTP mới, và bỏ quên `close()` thì số socket mở tăng dần suốt mẻ mà không có lỗi nào.
+    intraday_provider = provider
+    if intraday_provider_name() != provider.name:
+        intraday_provider = get_intraday_provider()
+
+    # Khung suy ra không tải được; bỏ qua im lặng thay vì báo lỗi, để người vận hành tích cả
+    # hàng nút trên giao diện vẫn ra kết quả đúng thay vì một thông báo bắt họ đi tra xem khung
+    # nào là khung gộp. Danh sách rỗng thì quay về đúng hành vi cũ: chỉ nến ngày.
+    codes = [c for c in tfs.parse_list(timeframes, default=(tfs.DAILY,)) if not tfs.get(c).derived]
+    codes = sorted(codes or [tfs.DAILY], key=tfs.sort_key)
+
+    pairs = [(raw.strip().upper(), code) for raw in symbols for code in codes]
+
+    total = len(pairs)
     processed = synced = failed = skipped = rows_written = 0
     anomalies: list[dict] = []
     stopped = False
+    by_timeframe: dict[str, dict[str, int]] = {
+        code: {"synced": 0, "failed": 0, "skipped": 0, "rows_written": 0} for code in codes
+    }
 
-    def report(symbol: str, index: int, *, error: str | None = None, done: bool = False) -> None:
+    def report(
+        symbol: str, timeframe: str, index: int, *, error: str | None = None, done: bool = False
+    ) -> None:
         if on_progress is None:
             return
         try:
             on_progress(
                 {
                     "symbol": symbol,
+                    "timeframe": timeframe,
                     "index": index,
                     "total": total,
                     "processed": processed,
@@ -337,57 +371,94 @@ def sync_ohlcv_batch(
             log.exception("Không báo được tiến độ đồng bộ")
 
     try:
-        for index, raw in enumerate(symbols, start=1):
+        for index, (symbol, code) in enumerate(pairs, start=1):
             if should_stop is not None and should_stop():
                 stopped = True
-                log.info("sync_ohlcv: dừng theo yêu cầu sau %s/%s mã", processed, total)
+                log.info("sync_ohlcv: dừng theo yêu cầu sau %s/%s lượt", processed, total)
                 break
 
-            symbol = raw.strip().upper()
-            report(symbol, index)
-
-            row = db.scalar(select(Symbol).where(Symbol.symbol == symbol))
-
-            date_from = today - timedelta(days=days)
-            if not force_full and row and row.last_ohlcv_date:
-                date_from = max(date_from, row.last_ohlcv_date - timedelta(days=5))
-            if date_from >= today:
-                processed += 1
-                skipped += 1
-                report(symbol, index, done=True)
-                continue
-
+            report(symbol, code, index)
+            tf = tfs.get(code)
+            counts = by_timeframe[code]
             error: str | None = None
-            try:
-                bars = provider.get_ohlcv(symbol, date_from, today)
-                if not bars:
-                    error = "không có dữ liệu trả về"
-                    anomalies.append({"symbol": symbol, "issue": error})
+            written = 0
+
+            if tf.is_daily:
+                row = db.scalar(select(Symbol).where(Symbol.symbol == symbol))
+
+                date_from = today - timedelta(days=days)
+                if not force_full and row and row.last_ohlcv_date:
+                    date_from = max(date_from, row.last_ohlcv_date - timedelta(days=5))
+                if date_from >= today:
+                    processed += 1
+                    skipped += 1
+                    counts["skipped"] += 1
+                    report(symbol, code, index, done=True)
+                    continue
+
+                try:
+                    bars = provider.get_ohlcv(symbol, date_from, today)
+                    if not bars:
+                        error = "không có dữ liệu trả về"
+                        anomalies.append({"symbol": symbol, "timeframe": code, "issue": error})
+                        failed += 1
+                        counts["failed"] += 1
+                    else:
+                        written = _upsert_bars(db, symbol, bars, provider.name)
+                        if row:
+                            row.last_ohlcv_date = bars[-1].trade_date
+                            row.last_synced_at = utcnow()
+                        synced += 1
+                        counts["synced"] += 1
+                except MarketDataError as exc:
                     failed += 1
-                else:
-                    rows_written += _upsert_bars(db, symbol, bars, provider.name)
-                    if row:
-                        row.last_ohlcv_date = bars[-1].trade_date
-                        row.last_synced_at = utcnow()
-                    synced += 1
+                    counts["failed"] += 1
+                    error = str(exc)[:180]
+                    anomalies.append({"symbol": symbol, "timeframe": code, "issue": error})
+                    log.warning("sync_ohlcv %s %s lỗi: %s", symbol, code, exc)
+                except Exception as exc:
+                    failed += 1
+                    counts["failed"] += 1
+                    error = f"{type(exc).__name__}: {exc}"[:180]
+                    anomalies.append({"symbol": symbol, "timeframe": code, "issue": error})
+                    log.exception("sync_ohlcv %s %s lỗi không mong đợi", symbol, code)
+            else:
+                try:
+                    written = bars_store.sync_bars_with(
+                        intraday_provider, db, symbol, tf, force_full=force_full
+                    )
+                    if written:
+                        synced += 1
+                        counts["synced"] += 1
+                    else:
+                        # Nguồn chỉ giữ một cửa sổ trượt vài trăm nến, và một mã ít thanh khoản
+                        # hoàn toàn có thể không có nến nào trong khung đó. Đó là **thiếu dữ
+                        # liệu**, không phải lỗi — đếm thành lỗi thì tỉ lệ hỏng của mẻ vọt lên và
+                        # cảnh báo "nhà cung cấp đổi endpoint" réo mỗi ngày mà không có gì hỏng.
+                        skipped += 1
+                        counts["skipped"] += 1
+                except MarketDataError as exc:
+                    failed += 1
+                    counts["failed"] += 1
+                    error = str(exc)[:180]
+                    anomalies.append({"symbol": symbol, "timeframe": code, "issue": error})
+                    log.warning("sync_bars %s %s lỗi: %s", symbol, code, exc)
+                except Exception as exc:
+                    failed += 1
+                    counts["failed"] += 1
+                    error = f"{type(exc).__name__}: {exc}"[:180]
+                    anomalies.append({"symbol": symbol, "timeframe": code, "issue": error})
+                    log.exception("sync_bars %s %s lỗi không mong đợi", symbol, code)
 
-                    if synced % progress_every == 0:
-                        db.commit()
-                        log.info("sync_ohlcv: đã xong %s/%s mã", synced, total)
-
-            except MarketDataError as exc:
-                failed += 1
-                error = str(exc)[:180]
-                anomalies.append({"symbol": symbol, "issue": error})
-                log.warning("sync_ohlcv %s lỗi: %s", symbol, exc)
-            except Exception as exc:
-                failed += 1
-                error = f"{type(exc).__name__}: {exc}"[:180]
-                anomalies.append({"symbol": symbol, "issue": error})
-                log.exception("sync_ohlcv %s lỗi không mong đợi", symbol)
+            rows_written += written
+            counts["rows_written"] += written
 
             processed += 1
-            report(symbol, index, error=error, done=True)
+            if written and processed % progress_every == 0:
+                db.commit()
+                log.info("sync_ohlcv: đã xong %s/%s lượt", processed, total)
+
+            report(symbol, code, index, error=error, done=True)
 
             time.sleep(delay_seconds)
     finally:
@@ -420,61 +491,20 @@ def sync_ohlcv_batch(
         "skipped": skipped,
         "rows_written": rows_written,
         "stopped": stopped,
+        "timeframes": codes,
+        "by_timeframe": by_timeframe,
         "duration_seconds": int(time.monotonic() - started),
     }
 
 
 # ======================================================================
 # Đọc dữ liệu phục vụ giao diện
+#
+# Chuỗi nến không còn đọc ở đây: mọi khung đi qua `market_data.bars.read_bars`, chỗ duy nhất
+# biết khung nào nằm ở bảng nào và khung nào phải gộp lúc đọc. Giữ thêm một hàm đọc nến ngày
+# riêng ở đây là dựng sẵn cái bẫy mà chính module `bars` cảnh báo: hai đường đọc rồi sẽ trôi
+# khỏi nhau, và cùng một mã ở cùng một khung cho hai hình khác nhau tuỳ màn hình nào gọi.
 # ======================================================================
-def get_candles(
-    db: Session,
-    symbol: str,
-    *,
-    date_from: date | None = None,
-    date_to: date | None = None,
-    limit: int = 500,
-    auto_fetch: bool = True,
-) -> list[OhlcvDaily]:
-    """Lấy nến từ cơ sở dữ liệu.
-
-    `auto_fetch` — nếu chưa có dữ liệu của mã này thì tải về ngay lần đầu, các lần sau đọc từ
-    cơ sở dữ liệu. Giữ trải nghiệm mượt mà vẫn tôn trọng BR-832: chỉ tải một lần, không gọi
-    API bên ngoài ở mọi request.
-    """
-    symbol = symbol.strip().upper()
-
-    conditions = [OhlcvDaily.symbol == symbol]
-    if date_from:
-        conditions.append(OhlcvDaily.trade_date >= date_from)
-    if date_to:
-        conditions.append(OhlcvDaily.trade_date <= date_to)
-
-    rows = db.scalars(
-        select(OhlcvDaily)
-        .where(and_(*conditions))
-        .order_by(OhlcvDaily.trade_date.desc())
-        .limit(limit)
-    ).all()
-
-    # Chỉ tự tải khi hỏi dữ liệu mới nhất. Hỏi một khoảng quá khứ mà rỗng nghĩa là mã đó
-    # chưa niêm yết khi ấy — tải lại toàn bộ cũng không có thêm gì, chỉ tốn thời gian.
-    if not rows and auto_fetch and not date_to:
-        try:
-            sync_ohlcv(db, symbol)
-        except MarketDataError as exc:
-            log.warning("Không tải được giá %s theo yêu cầu: %s", symbol, exc)
-            return []
-        rows = db.scalars(
-            select(OhlcvDaily)
-            .where(and_(*conditions))
-            .order_by(OhlcvDaily.trade_date.desc())
-            .limit(limit)
-        ).all()
-
-    return list(reversed(rows))
-
-
 def search_symbols(
     db: Session, query: str | None = None, exchange: str | None = None, limit: int = 50
 ) -> list[Symbol]:

@@ -12,13 +12,14 @@ bất thường phải nhìn thấy được, không nằm im trong bảng.
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, or_, select
 
+from app.core.config import settings
 from app.core.datetime_utils import local_today
 from app.core.deps import DbSession, client_ip, require_permission, user_agent
 from app.core.exceptions import NotFound, ValidationError
@@ -26,7 +27,8 @@ from app.core.pagination import PageParams, build_page, count_of, page_params
 from app.models.market import MarketSyncLog, OhlcvDaily, Symbol
 from app.models.staff import Staff
 from app.schemas.common import Message
-from app.schemas.domain import CandleOut, SymbolOut
+from app.api.market_common import ohlcv_payload, timeframe_list
+from app.schemas.domain import SymbolOut, TimeframeOut
 from app.services import market_data
 from app.services.audit_service import AuditAction, log_action
 
@@ -77,6 +79,9 @@ def overview(staff: CanView, db: DbSession) -> dict:
         **stats,
         "symbols_stale": int(stale),
         "stale_after_days": STALE_AFTER_DAYS,
+        # Độ phủ của **từng khung**, không chỉ tổng số nến. Một hệ thống đa khung có thể đủ nến
+        # ngày mà thủng hẳn khung 1 giờ, và con số tổng thì che đúng chỗ đó đi.
+        "timeframes": market_data.bars.coverage(db),
         "by_exchange": [
             {"exchange": row.exchange, "total": int(row.total), "with_data": int(row.with_data or 0)}
             for row in by_exchange
@@ -349,33 +354,36 @@ def list_symbol_codes(
     return market_data.list_symbol_codes(db, exchange=exchange)
 
 
+@router.get("/timeframes", response_model=list[TimeframeOut])
+def list_timeframes(staff: CanView) -> list[TimeframeOut]:
+    """Danh mục khung thời gian. Bản riêng cho Admin Site, lý do như `search_symbols()`."""
+    return [TimeframeOut.model_validate(tf) for tf in timeframe_list()]
+
+
 @router.get("/ohlcv", response_model=dict)
 def ohlcv(
     symbol: str,
     staff: CanView,
     db: DbSession,
+    resolution: str = Query(default="1D", description="1m · 3m · 5m · 15m · 30m · 1h · 2h · 4h · 1D · 1W · 1M"),
     date_from: date | None = None,
     date_to: date | None = None,
+    before: datetime | None = Query(
+        default=None, description="Chỉ lấy nến mở trước mốc này — dùng để cuộn ngược về quá khứ"
+    ),
     limit: int = Query(default=400, ge=10, le=2000),
 ) -> dict:
-    """Nến ngày của một mã — nguồn dữ liệu cho biểu đồ của màn dựng bộ lọc.
+    """Nến của một mã ở một khung — nguồn dữ liệu cho biểu đồ của màn dựng bộ lọc.
 
     Giống hệt route cùng tên bên khách hàng, nhưng gác bằng quyền nhân viên. Phải có bản riêng
     chứ không dùng chung được: hai site đọc hai cookie khác nhau (`adm_at` và `cst_at`), ký bằng
     hai secret khác nhau — người trực trang quản trị gọi vào route khách hàng luôn nhận 401.
+    Phần dựng dữ liệu thì dùng chung ở `app.api.customer.market._ohlcv_payload`.
     """
-    candles = market_data.get_candles(
-        db, symbol, date_from=date_from, date_to=date_to, limit=limit
+    return ohlcv_payload(
+        db, symbol, resolution,
+        date_from=date_from, date_to=date_to, before=before, limit=limit,
     )
-    if not candles:
-        raise NotFound(f"Chưa có dữ liệu giá cho mã {symbol.upper()}", "NO_PRICE_DATA")
-
-    return {
-        "symbol": symbol.upper(),
-        "resolution": "D",
-        "candles": [CandleOut.model_validate(c) for c in candles],
-        "attribution": market_data.attribution(),
-    }
 
 
 @router.get("/sync-logs", response_model=dict)
@@ -430,6 +438,9 @@ def run_sync_ohlcv(
     db: DbSession,
     symbols: list[str] | None = None,
     days: int = Query(default=120, ge=1, le=3650),
+    timeframes: list[str] | None = Query(
+        default=None, description="Bỏ trống thì lấy toàn bộ khung đang bật, giống job hằng ngày"
+    ),
 ) -> Message:
     """Tải giá cho một nhóm mã đã chọn.
 
@@ -466,17 +477,24 @@ def run_sync_ohlcv(
             {"field": "symbols"},
         )
 
+    codes = market_data.timeframes.parse_list(
+        timeframes, default=tuple(market_data.timeframes.configured())
+    )
+
     log_action(
         db, action=AuditAction.SYNC_RUN_MANUAL, actor=staff, target_type="market",
-        target_id="sync_ohlcv", new_value={"symbols": wanted[:20], "count": len(wanted), "days": days},
+        target_id="sync_ohlcv",
+        new_value={"symbols": wanted[:20], "count": len(wanted), "days": days,
+                   "timeframes": codes},
         reason=f"Đồng bộ giá bởi {staff.username}",
         ip=client_ip(request), user_agent=user_agent(request),
     )
     db.commit()
 
-    background.add_task(_sync_ohlcv_task, wanted, days)
+    background.add_task(_sync_ohlcv_task, wanted, days, codes)
     return Message(
-        message=f"Đang tải giá cho {len(wanted)} mã ở chạy nền. Kết quả xem ở phần Nhật ký đồng bộ.",
+        message=f"Đang tải giá cho {len(wanted)} mã × {len(codes)} khung ở chạy nền. "
+                "Kết quả xem ở phần Nhật ký đồng bộ.",
         code="MARKET_OHLCV_QUEUED",
     )
 
@@ -496,6 +514,16 @@ class FullSyncIn(BaseModel):
     #: Chỉ dùng cho `incremental`. Khoảng đệm rộng hơn số phiên bỏ lỡ để bù những ngày máy chủ
     #: không chạy; nguồn trả về trùng thì bản ghi cũ được ghi đè, không sinh dòng thừa.
     days: int = Field(default=30, ge=1, le=3650)
+    #: Khung cần tải. Bỏ trống thì lấy **toàn bộ khung đang bật** — giống hệt job hằng ngày.
+    #:
+    #: Nút này tên là "đồng bộ tất cả"; để nó mặc định chỉ kéo nến ngày thì người vận hành bấm
+    #: xong, thấy báo hoàn tất, rồi mở biểu đồ 1 giờ ra vẫn trống — và không có gì trên màn hình
+    #: nói cho họ biết vì sao.
+    #:
+    #: `days` và `mode=full` **chỉ áp cho nến ngày**. Khung trong ngày luôn xin trọn cửa sổ mà
+    #: nhà cung cấp phục vụ: xin rộng hơn cũng chỉ nhận về bấy nhiêu, còn "tải lại toàn bộ lịch
+    #: sử" thì không tồn tại vì nguồn trả `no_data` cho mọi khoảng quá khứ.
+    timeframes: list[str] | None = None
 
 
 @router.post("/sync-all", response_model=dict)
@@ -512,19 +540,23 @@ def start_full_sync(
     """
     full = payload.mode == "full"
     days = market_data.fullsync.FULL_HISTORY_DAYS if full else payload.days
+    codes = market_data.timeframes.parse_list(
+        payload.timeframes, default=tuple(market_data.timeframes.configured())
+    )
 
     log_action(
         db, action=AuditAction.SYNC_RUN_MANUAL, actor=staff, target_type="market",
         target_id="sync_all",
-        new_value={"mode": payload.mode, "days": days},
-        reason=f"Đồng bộ giá toàn danh mục ({payload.mode}) bởi {staff.username}",
+        new_value={"mode": payload.mode, "days": days, "timeframes": codes},
+        reason=f"Đồng bộ giá toàn danh mục ({payload.mode}, {', '.join(codes)}) "
+               f"bởi {staff.username}",
         ip=client_ip(request), user_agent=user_agent(request),
     )
     db.commit()
 
     # Khởi động sau khi ghi audit: mẻ có chạy được hay không thì thao tác bấm nút vẫn phải có vết.
     return market_data.fullsync.start(
-        days=days, force_full=full, triggered_by=staff.username
+        days=days, force_full=full, triggered_by=staff.username, timeframes=codes
     )
 
 
@@ -566,12 +598,12 @@ def _sync_symbols_task() -> None:
         db.close()
 
 
-def _sync_ohlcv_task(symbols: list[str], days: int) -> None:
+def _sync_ohlcv_task(symbols: list[str], days: int, timeframes: list[str] | None = None) -> None:
     from app.core.database import SessionLocal
 
     db = SessionLocal()
     try:
-        market_data.sync_ohlcv_batch(db, symbols, days=days)
+        market_data.sync_ohlcv_batch(db, symbols, timeframes=timeframes, days=days)
     finally:
         db.close()
 
@@ -581,12 +613,27 @@ def _backfill_new_symbol_task(symbol: str) -> None:
 
     Xin 30 năm chứ không phải khoảng đệm ngắn như job hằng ngày: mã mới chưa có gì trong cơ sở
     dữ liệu, phải kéo từ ngày niêm yết. Nguồn tự cắt phần không tồn tại.
+
+    Nạp luôn các khung trong ngày đang bật. Đợi mẻ hằng ngày lúc 16:00 thì mã vừa thêm có biểu
+    đồ ngày ngay nhưng bấm sang khung 1 giờ lại trống — và người vừa thêm mã sẽ đọc đó là "tính
+    năng hỏng" chứ không phải "chưa tới giờ chạy job".
     """
     from app.core.database import SessionLocal
 
     db = SessionLocal()
     try:
         market_data.sync_ohlcv(db, symbol, days=30 * 365, force_full=True)
+        for code in market_data.timeframes.parse_list(
+            settings.market_intraday_timeframes, default=()
+        ):
+            try:
+                market_data.sync_bars(db, symbol, code)
+                db.commit()
+            except Exception:
+                # Một khung hỏng không được kéo theo các khung còn lại: mã vẫn có nến ngày và
+                # phần lớn khung khác, và mẻ hằng ngày sẽ nhặt nốt phần thiếu.
+                db.rollback()
+                log.warning("Không nạp được khung %s cho mã mới %s", code, symbol)
     except Exception:
         # Thất bại thì mã nằm lại ở trạng thái "thiếu dữ liệu" trên màn danh mục và người vận
         # hành bấm đồng bộ lại được — không có gì mất mát, không cần dựng cơ chế thử lại riêng.

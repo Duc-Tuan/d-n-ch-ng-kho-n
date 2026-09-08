@@ -409,6 +409,13 @@ export type SymbolInfo = {
 };
 
 export type Candle = {
+  /**
+   * Mốc **mở** nến, ISO 8601 ở UTC.
+   *
+   * Thứ duy nhất định vị được một nến trong ngày: một phiên có nhiều nến cùng `trade_date`.
+   */
+  time: string;
+  /** Ngày giao dịch theo giờ Việt Nam. Nhiều nến trong ngày dùng chung một giá trị. */
   trade_date: string;
   open: number;
   high: number;
@@ -417,9 +424,31 @@ export type Candle = {
   volume: number;
 };
 
+/** Một khung thời gian trên biểu đồ — khớp `TimeframeOut` của backend. */
+export type Timeframe = {
+  code: string;
+  label: string;
+  short_label: string;
+  seconds: number;
+  intraday: boolean;
+  /** Khung được gộp lúc đọc từ khung nhỏ hơn, không có bảng lưu riêng. */
+  derived: boolean;
+  derive_from: string | null;
+  retention_days: number | null;
+};
+
 export type OhlcvResponse = {
   symbol: string;
   resolution: string;
+  timeframe: Timeframe;
+  /**
+   * Chênh lệch múi giờ thị trường so với UTC, tính bằng giây.
+   *
+   * `lightweight-charts` luôn vẽ nhãn thời gian theo UTC, nên nến 09:15 giờ Việt Nam (02:15
+   * UTC) sẽ hiện thành 02:15 nếu không cộng thêm. Số này do máy chủ trả về chứ không viết cứng
+   * ở đây, để đổi thị trường sau này không phải sửa hai nơi.
+   */
+  tz_offset_seconds: number;
   candles: Candle[];
   /** BR-836 — ghi nguồn dữ liệu dưới bảng giá và biểu đồ. */
   attribution: string;

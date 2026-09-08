@@ -47,6 +47,7 @@ import type {
 import { toIndicatorCandles } from '@/lib/indicators/snapshot';
 import type { Candle, OhlcvResponse } from '@/types';
 
+import { removeChart } from './chart/chartLifecycle';
 import { LINE_STYLE_MAP, baseChartOptions, down, up } from './chart/chartTheme';
 import { DrawingCanvas } from './chart/DrawingCanvas';
 import { DrawingStyleBar } from './chart/DrawingStyleBar';
@@ -55,21 +56,60 @@ import { IndicatorPane, PaneButton } from './chart/IndicatorPane';
 import { IndicatorSettingsModal } from './chart/IndicatorSettingsModal';
 import { IndicatorsModal } from './chart/IndicatorsModal';
 import { ShapesLayer } from './chart/ShapesLayer';
+import { mergeCandles, prependOlder } from './chart/candles';
+import { DEFAULT_TIMEFRAME, TimeframeBar, useTimeframes } from './chart/TimeframeBar';
 import { useChartSync } from './chart/useChartSync';
 import { useDrawings } from './chart/useDrawings';
 import { useElementSize } from './chart/useElementSize';
 import type { IndicatorStore } from './chart/useIndicators';
 
+/**
+ * Khoảng thời gian nhìn được, tính bằng **ngày lịch** chứ không bằng số nến.
+ *
+ * Trước đây mỗi khoảng là một con số nến cố định (3 tháng = 63 nến), đúng cho nến ngày và sai
+ * cho mọi khung khác: 63 nến 1 phút là bốn tiếng, không phải ba tháng. Số nến giờ được suy ra
+ * từ khoảng thời gian và độ dài nến, nên "3 tháng" luôn là ba tháng thật ở mọi khung.
+ */
 const RANGES = [
-  { key: '3m', label: '3 tháng', bars: 63 },
-  { key: '6m', label: '6 tháng', bars: 126 },
-  { key: '1y', label: '1 năm', bars: 252 },
-  { key: 'all', label: 'Tất cả', bars: 0 },
+  // Tháng viết tắt `MN`, không phải `M`: `M` đứng cạnh hàng khung thời gian sẽ đọc thành khung
+  // tháng, mà ngay trong hàng đó `1m` đã là một phút rồi. `MN` là cách viết tắt cho tháng mà
+  // chính bảng quy đổi tên khung của máy chủ đang dùng, nên hai bên gọi cùng một tên.
+  { key: '1mo', label: '1MN', days: 30 },
+  { key: '3m', label: '3MN', days: 90 },
+  { key: '6m', label: '6MN', days: 180 },
+  { key: '1y', label: '1 năm', days: 365 },
+  { key: 'all', label: 'Tất cả', days: 0 },
 ];
+
+/** Số phiên giao dịch một năm — 365 ngày lịch trừ cuối tuần và nghỉ lễ. */
+const SESSIONS_PER_YEAR = 252;
+
+/** Độ dài một phiên: 09:00–11:30 và 13:00–14:45, tính bằng giây. */
+const SESSION_SECONDS = 4.75 * 3600;
+
+/** Một khoảng chỉ hiện khi nó đủ nến để đọc được hình, và không quá nhiều để vẽ nổi.
+ *
+ *  Trần đặt rộng tay (một tháng nến 1 phút là ~6.000 cây) vì hàng này chỉ còn năm nút: siết
+ *  chặt thì ở khung 1 phút không nút nào lọt và người dùng còn mỗi *Tất cả*, tức là mất luôn
+ *  đường thu hẹp tầm nhìn. Vẽ sáu nghìn nến vẫn nằm trong tầm của thư viện biểu đồ. */
+const RANGE_MIN_BARS = 8;
+const RANGE_MAX_BARS = 8000;
+
+function barsForRange(days: number, tfSeconds: number): number {
+  if (!days) return 0;
+  const sessions = Math.max(1, Math.round((days * SESSIONS_PER_YEAR) / 365));
+  // Khung từ một ngày trở lên đếm theo phiên; khung trong ngày đếm theo giờ giao dịch thật —
+  // chia cho 24 tiếng sẽ cho ra số nến gấp năm lần số nến thị trường thực sự sinh ra.
+  const seconds = tfSeconds >= 86400 ? sessions * 86400 : sessions * SESSION_SECONDS;
+  return Math.max(1, Math.round(seconds / tfSeconds));
+}
 
 /** Số nến còn lại bên trái trước khi bắt đầu tải thêm — tải sớm để không thấy khoảng trắng. */
 const LOAD_MORE_THRESHOLD = 20;
 const LOAD_MORE_SIZE = 300;
+
+/** Số nến nạp khi đổi sang một khung khác. Rộng hơn `LOAD_MORE_SIZE` để có sẵn phần cuộn. */
+const INITIAL_SIZE = 500;
 
 /** Chiều cao một cửa sổ chỉ báo. Đủ để đọc RSI, không lấn quá nhiều phần nến. */
 const PANE_HEIGHT = 120;
@@ -77,6 +117,7 @@ const PANE_HEIGHT = 120;
 export function PriceChart({
   symbol,
   candles: initialCandles,
+  tzOffsetSeconds = 0,
   indicators,
   height = 420,
   attribution,
@@ -87,6 +128,11 @@ export function PriceChart({
   /** Truyền `symbol` để bật tải thêm lịch sử khi cuộn. Bỏ trống thì chỉ hiển thị tĩnh. */
   symbol?: string;
   candles: Candle[];
+  /**
+   * Chênh lệch múi giờ thị trường so với UTC (giây), lấy từ chính phản hồi đã sinh ra
+   * `candles`. Xem `toIndicatorCandles` — thư viện biểu đồ vẽ nhãn thời gian theo UTC.
+   */
+  tzOffsetSeconds?: number;
   /**
    * Bộ chỉ báo, do màn cha giữ (`useIndicators`).
    *
@@ -136,6 +182,23 @@ export function PriceChart({
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
 
+  /* ── Khung thời gian ────────────────────────────────────────────────────
+       Khung nằm ở đây chứ không ở màn cha vì biểu đồ đã tự gọi máy chủ sẵn (cuộn tải thêm
+       lịch sử), và vì mọi thứ đổi theo khung — vùng nhìn, hình vẽ tay, nhãn trục thời gian —
+       đều thuộc về biểu đồ. Màn cha vẫn nạp sẵn nến ngày để lần vẽ đầu không phải chờ thêm
+       một lượt gọi nữa. */
+  const timeframes = useTimeframes();
+  const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
+  const [switching, setSwitching] = useState(false);
+  const [tzOffset, setTzOffset] = useState(tzOffsetSeconds);
+
+  const activeTimeframe = useMemo(
+    () => timeframes.find((tf) => tf.code === timeframe),
+    [timeframes, timeframe],
+  );
+  const tfSeconds = activeTimeframe?.seconds ?? 86400;
+  const intraday = activeTimeframe?.intraday ?? false;
+
   /** Tăng mỗi lần biểu đồ được dựng lại. Series mới luôn **rỗng**, nên mọi effect nạp dữ liệu
    *  vào nó phải chạy lại — không có mốc này thì biểu đồ trắng cho tới lần đổi dữ liệu kế tiếp. */
   const [epoch, setEpoch] = useState(0);
@@ -144,18 +207,102 @@ export function PriceChart({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
-  /** Hình vẽ tay: đường xu hướng, Fibonacci, vùng giá… Gắn theo mã, lưu trong máy người dùng. */
-  const drawings = useDrawings(symbol);
+  /** Hình vẽ tay: đường xu hướng, Fibonacci, vùng giá… Lưu trong máy người dùng.
+   *
+   *  Gắn theo **mã và khung**, không chỉ theo mã: một đường xu hướng nối hai đáy cách nhau sáu
+   *  tháng trên biểu đồ ngày, khi hiện lại trên biểu đồ 1 phút, sẽ nằm ngoài toàn bộ vùng nhìn
+   *  — người dùng chỉ thấy hình vẽ của mình biến mất mà không hiểu vì sao. */
+  const drawings = useDrawings(symbol ? `${symbol}@${timeframe}` : undefined);
 
   // Dùng ref trong callback của biểu đồ để không phải gắn lại sự kiện mỗi lần dữ liệu đổi.
-  const stateRef = useRef({ candles, loadingMore, exhausted, symbol });
-  stateRef.current = { candles, loadingMore, exhausted, symbol };
+  const stateRef = useRef({ candles, loadingMore, exhausted, symbol, timeframe, switching });
+  stateRef.current = { candles, loadingMore, exhausted, symbol, timeframe, switching };
 
-  // Đổi mã thì bắt đầu lại từ dữ liệu mới.
+  /**
+   * Chuỗi nến đang giữ thuộc về mã nào, khung nào.
+   *
+   * Đây là thứ phân biệt "đổi sang chuỗi khác, phải nạp lại từ đầu" với "vẫn chuỗi cũ, chỉ là
+   * dữ liệu vừa được làm mới". Không có nó thì mọi lượt làm mới đều bị hiểu thành lượt đầu tiên,
+   * và phần lịch sử đã cuộn về bị vứt đi mỗi lần.
+   */
+  const loadedKeyRef = useRef<string | null>(null);
+  const seriesKey = `${symbol ?? ''}@${timeframe}`;
+
+  /* ── Khung mặc định: dùng thẳng dữ liệu màn cha đã nạp ──────────────────
+       Gọi lại lần nữa cho cùng một chuỗi chỉ làm biểu đồ chớp một cái lúc mở trang.
+
+       Nhưng **chỉ lần đầu mới được gán đè**. Màn cha làm mới nến ngày theo chu kỳ của nó và mỗi
+       lần chỉ đưa về vài trăm phiên gần nhất; gán thẳng chuỗi đó vào là xoá sạch phần quá khứ
+       người dùng vừa kéo chuột để tải. Những lần sau chỉ gộp: cập nhật nến đã có, nối nến mới. */
   useEffect(() => {
-    setCandles(initialCandles);
+    if (timeframe !== DEFAULT_TIMEFRAME) return;
+    setTzOffset(tzOffsetSeconds);
+
+    if (loadedKeyRef.current !== seriesKey) {
+      loadedKeyRef.current = seriesKey;
+      setCandles(initialCandles);
+      setExhausted(false);
+      setSwitching(false);
+      return;
+    }
+    setCandles((current) => mergeCandles(current, initialCandles));
+  }, [timeframe, seriesKey, initialCandles, tzOffsetSeconds]);
+
+  /* ── Các khung còn lại: biểu đồ tự gọi máy chủ ──────────────────────────
+       Cố ý **không** phụ thuộc `initialCandles`. Chuỗi đó là nến ngày của màn cha, không liên
+       quan gì tới khung 1 giờ đang xem; để nó trong danh sách phụ thuộc thì mỗi lượt màn cha
+       làm mới nến ngày lại kéo theo một lượt nạp lại khung 1 giờ từ đầu — và cuốn sạch phần
+       lịch sử đã cuộn về. Đó chính là lý do cuộn về quá khứ ở khung nhỏ trông như không tải. */
+  useEffect(() => {
+    if (timeframe === DEFAULT_TIMEFRAME || !symbol) return;
+    if (loadedKeyRef.current === seriesKey) return;
+
+    // Cờ huỷ cho phản hồi tới muộn: bấm nhanh 1m → 5m → 15m mà không có nó thì chuỗi của khung
+    // bấm trước có thể về sau và ghi đè lên khung đang chọn, để lại một biểu đồ nói dối.
+    let cancelled = false;
+    setSwitching(true);
+
+    api
+      .get<OhlcvResponse>(`${CUSTOMER}/market/ohlcv`, {
+        symbol,
+        resolution: timeframe,
+        limit: INITIAL_SIZE,
+      })
+      .then((response) => {
+        if (cancelled) return;
+        loadedKeyRef.current = seriesKey;
+        setCandles(response.candles ?? []);
+        setTzOffset(response.tz_offset_seconds ?? 0);
+        setExhausted(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        loadedKeyRef.current = seriesKey;
+        // Khung chưa có dữ liệu (mã mới, hoặc khung 1 phút của mã ít thanh khoản) không phải
+        // lỗi cần báo đỏ — biểu đồ trống kèm dòng chữ ở dưới đã nói đủ.
+        setCandles([]);
+        setExhausted(true);
+      })
+      .finally(() => {
+        if (!cancelled) setSwitching(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, timeframe, seriesKey]);
+
+  // Đổi mã thì quay về khung mặc định: giữ nguyên khung 1 phút khi nhảy sang mã khác nghe hợp
+  // lý, nhưng mã mới thường chưa có nến 1 phút nào và người dùng nhận một biểu đồ trống.
+  useEffect(() => {
+    setTimeframe(DEFAULT_TIMEFRAME);
+  }, [symbol]);
+
+  // Cuộn tới đâu là chuyện của từng chuỗi. Không xoá cờ này khi đổi mã hay đổi khung thì chuỗi
+  // mới thừa hưởng "đã hết lịch sử" của chuỗi cũ và không bao giờ tải thêm được nữa.
+  useEffect(() => {
     setExhausted(false);
-  }, [initialCandles, symbol]);
+  }, [seriesKey]);
 
   /* ── Mở rộng kín khung nhìn ──────────────────────────────────────────────
        Lớp phủ `fixed inset-0` **trong trang**, không gọi `requestFullscreen`: biểu đồ chiếm
@@ -196,33 +343,32 @@ export function PriceChart({
   const loadOlder = useCallback(async () => {
     const state = stateRef.current;
     if (!state.symbol || state.loadingMore || state.exhausted || !state.candles.length) return;
+    // Đang đổi khung thì chuỗi trên tay còn là của khung cũ. Nối thêm lúc này là ghép nến hai
+    // khung khác nhau vào một mảng, và nó chỉ lộ ra ở chỗ vài cây nến sai chiều giữa biểu đồ.
+    if (state.switching) return;
 
     setLoadingMore(true);
     try {
-      const earliest = state.candles[0].trade_date;
-      // Lùi một ngày để không lấy trùng nến đang có ở mép.
-      const before = new Date(earliest);
-      before.setDate(before.getDate() - 1);
+      const earliest = state.candles[0];
 
+      // Hỏi theo **mốc mở nến**, không theo ngày. Một phiên có 285 nến 1 phút; lùi theo ngày
+      // thì mỗi lần cuộn nhảy qua trọn cả phiên và người dùng không bao giờ xem được đoạn giữa.
+      // Máy chủ hiểu `before` là loại trừ, nên không cần tự lùi thêm một bước ở đây.
       const response = await api.get<OhlcvResponse>(`${CUSTOMER}/market/ohlcv`, {
         symbol: state.symbol,
-        date_to: before.toISOString().slice(0, 10),
+        resolution: state.timeframe,
+        before: earliest.time ?? `${earliest.trade_date}T00:00:00Z`,
         limit: LOAD_MORE_SIZE,
       });
 
       const older = response.candles ?? [];
-      if (!older.length) {
+      const merged = prependOlder(state.candles, older);
+      if (!merged) {
+        // Không có nến nào mới so với chuỗi đang giữ: hết lịch sử ở khung này.
         setExhausted(true);
         return;
       }
-
-      setCandles((current) => {
-        // Ghép và khử trùng theo ngày — nguồn có thể trả lặp ở mép.
-        const seen = new Set(current.map((c) => c.trade_date));
-        const merged = [...older.filter((c) => !seen.has(c.trade_date)), ...current];
-        if (merged.length === current.length) setExhausted(true);
-        return merged;
-      });
+      setCandles(merged);
     } catch {
       // Hết dữ liệu hoặc lỗi mạng — dừng tải thêm, không báo lỗi ồn ào giữa thao tác cuộn.
       setExhausted(true);
@@ -248,18 +394,25 @@ export function PriceChart({
       const chart = chartRef.current;
       if (!chart || !count) return;
 
-      const span = RANGES.find((r) => r.key === range)?.bars ?? 0;
+      const days = RANGES.find((r) => r.key === range)?.days ?? 0;
+      const span = barsForRange(days, tfSeconds);
       if (!span || span >= count) {
         chart.timeScale().fitContent();
         return;
       }
       chart.timeScale().setVisibleLogicalRange({ from: count - span, to: count - 1 });
     },
-    [range],
+    [range, tfSeconds],
   );
 
-  /** Nến ở dạng chỉ báo cần: thời gian là giây unix, mọi giá trị đã ép số. */
-  const series = useMemo<IndicatorCandle[]>(() => toIndicatorCandles(candles), [candles]);
+  /** Nến ở dạng chỉ báo cần: thời gian là giây unix, mọi giá trị đã ép số.
+   *
+   *  Cộng luôn lệch múi giờ: thư viện in nhãn theo UTC, không cộng thì nến 09:15 hiện 02:15.
+   *  Phép cộng không đụng tới thứ tự hay giá trị nến nên chỉ báo tính ra con số y hệt. */
+  const series = useMemo<IndicatorCandle[]>(
+    () => toIndicatorCandles(candles, tzOffset),
+    [candles, tzOffset],
+  );
 
   /**
    * Cách người dùng kéo và phóng biểu đồ. Tách thành một hằng vì lớp công cụ vẽ **tắt rồi bật
@@ -287,6 +440,26 @@ export function PriceChart({
     }),
     [isMobile],
   );
+
+  /** Chỉ giữ những khoảng đủ nến để đọc được ở khung hiện tại: "1 ngày" trên biểu đồ tuần là
+   *  chưa tới một cây nến, còn "1 năm" trên biểu đồ 1 phút là gần trăm nghìn nến. */
+  const visibleRanges = useMemo(
+    () =>
+      RANGES.filter((item) => {
+        if (!item.days) return true;
+        const bars = barsForRange(item.days, tfSeconds);
+        return bars >= RANGE_MIN_BARS && bars <= RANGE_MAX_BARS;
+      }),
+    [tfSeconds],
+  );
+
+  // Đổi khung có thể làm khoảng đang chọn biến mất khỏi hàng nút. Không kéo nó về một khoảng
+  // còn hợp lệ thì không nút nào sáng, và bấm lại đúng nút cũ cũng không có gì xảy ra.
+  useEffect(() => {
+    if (visibleRanges.some((item) => item.key === range)) return;
+    const widest = visibleRanges.filter((item) => item.days).at(-1);
+    setRange(widest?.key ?? 'all');
+  }, [visibleRanges, range]);
 
   /**
    * Số chữ số thập phân của nhãn giá trên hình vẽ. Bảng giá in giá nguyên (mã giá vài chục nghìn
@@ -404,13 +577,35 @@ export function PriceChart({
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
       sync.unregister(chart);
-      chart.remove();
+      // Đánh dấu rồi mới gỡ: `ShapesLayer` và `DrawingCanvas` cầm chính handle này qua prop đọc
+      // từ ref, và effect của chúng còn chạy một lượt nữa sau khi effect này đã dọn xong.
+      removeChart(chart);
       chartRef.current = null;
       priceRef.current = null;
       volumeRef.current = null;
       overlaySeriesRef.current.clear();
     };
-  }, [height, interaction, loadOlder, sync]);
+    // `interaction` cố ý **không** nằm trong danh sách phụ thuộc — nó được áp lại bằng
+    // `applyOptions` ở effect ngay dưới. Để nó ở đây thì mỗi lần cờ `isMobile` lật là dựng lại
+    // toàn bộ biểu đồ; xem lý do đầy đủ ở effect đó.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [height, loadOlder, sync]);
+
+  /**
+   * Áp cách kéo/phóng lên biểu đồ đang có, **không** dựng lại nó.
+   *
+   * `useIsMobile` luôn trả `false` ở lần render đầu rồi mới lật sau khi mount — nó phải hỏi
+   * `window.matchMedia`, thứ không tồn tại lúc render trên máy chủ. Nên trên điện thoại, và chỉ
+   * trên điện thoại, `interaction` chắc chắn đổi một lần ngay sau khi trang hiện ra.
+   *
+   * Khi `interaction` còn nằm trong deps của effect dựng biểu đồ, cú lật đó gỡ và dựng lại toàn
+   * bộ biểu đồ: người dùng thấy nến chớp một cái, vùng nhìn về mặc định, và các lớp phủ nhận
+   * một handle đã chết ngay trong cùng lượt commit (`chartLifecycle`). Đổi vài cờ cuộn thì
+   * `applyOptions` làm được — không có lý do gì phải dựng lại cả biểu đồ.
+   */
+  useEffect(() => {
+    chartRef.current?.applyOptions(interaction);
+  }, [interaction, epoch]);
 
   // Bề rộng theo khung chứa chứ không theo cửa sổ trình duyệt: khung còn co giãn khi mở/đóng
   // một cửa sổ chỉ báo hay khi cột bảng giá bên trái đổi kích thước.
@@ -427,6 +622,15 @@ export function PriceChart({
   useEffect(() => {
     chartRef.current?.applyOptions({ timeScale: { visible: !lastVisiblePane } });
   }, [lastVisiblePane]);
+
+  // Khung trong ngày phải hiện giờ trên trục, không thì cả một phiên nến chỉ có một nhãn ngày
+  // lặp lại và không đọc được nến nào ở phút nào. Riêng khung 1 phút bật thêm giây: thư viện
+  // gộp nhãn theo bước phút và bỏ mất mốc mở phiên nếu không có nó.
+  useEffect(() => {
+    chartRef.current?.applyOptions({
+      timeScale: { timeVisible: intraday, secondsVisible: false },
+    });
+  }, [intraday, epoch]);
 
   // Khi nạp thêm lịch sử, giữ nguyên vùng người dùng đang nhìn thay vì nhảy về đầu.
   const previousCount = useRef(0);
@@ -551,12 +755,24 @@ export function PriceChart({
             )
           )}
 
-          {RANGES.map((item) => (
+          <TimeframeBar
+            value={timeframe}
+            onChange={setTimeframe}
+            items={timeframes}
+            disabled={!symbol}
+          />
+
+          {/* Vạch ngăn: khung thời gian đổi *độ dài một cây nến*, khoảng nhìn đổi *xem bao nhiêu
+              cây*. Hai hàng nút liền nhau không có gì ngăn cách trông như một hàng mười lăm nút
+              cùng loại, và người dùng phải bấm thử mới biết cái nào làm gì. */}
+          <span className="mx-1 h-5 w-px shrink-0 bg-line" aria-hidden />
+
+          {visibleRanges.map((item) => (
             <button
               key={item.key}
               onClick={() => setRange(item.key)}
               className={cn(
-                'min-h-touch rounded-lg px-3 text-sm transition-colors',
+                'min-h-touch shrink-0 rounded-lg px-3 text-sm transition-colors',
                 range === item.key
                   ? 'bg-primary font-medium text-primary-fg'
                   : 'text-ink-600 hover:bg-ink-100',
@@ -583,15 +799,38 @@ export function PriceChart({
         </div>
 
         <span className="flex items-center gap-2 text-xs text-ink-500">
-          {loadingMore ? (
+          {switching ? (
+            <>
+              <Icon name="spinner" size={13} />
+              Đang tải khung {activeTimeframe?.label ?? timeframe}…
+            </>
+          ) : loadingMore ? (
             <>
               <Icon name="spinner" size={13} />
               Đang tải thêm lịch sử…
             </>
           ) : (
             <>
-              {candles.length} phiên
-              {exhausted && ' · đã tải hết lịch sử'}
+              {/* "Phiên" chỉ đúng với nến ngày: 400 nến 1 phút là một phiên rưỡi, không phải
+                  400 phiên. */}
+              {candles.length} {intraday ? 'nến' : 'phiên'}
+              {exhausted && (
+                <span
+                  // Ở khung trong ngày, "hết lịch sử" không có nghĩa là mã này chỉ có bấy nhiêu.
+                  // Nhà cung cấp chỉ phục vụ một cửa sổ vài trăm nến gần đây; phần sâu hơn dày
+                  // lên dần theo mỗi phiên hệ thống chạy đồng bộ. Không nói ra thì người dùng
+                  // đọc thành lỗi mất dữ liệu.
+                  title={
+                    intraday
+                      ? 'Nguồn dữ liệu chỉ phục vụ một khoảng gần đây ở khung này. Lịch sử sâu hơn dày lên dần sau mỗi phiên đồng bộ.'
+                      : undefined
+                  }
+                  className={cn(intraday && 'cursor-help underline decoration-dotted')}
+                >
+                  {' · '}
+                  {intraday ? 'hết lịch sử khung này' : 'đã tải hết lịch sử'}
+                </span>
+              )}
             </>
           )}
 

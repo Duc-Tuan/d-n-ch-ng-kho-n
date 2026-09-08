@@ -6,13 +6,13 @@ BR-836 — luôn trả kèm `attribution` để giao diện ghi rõ nguồn dữ
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Query
 
+from app.api.market_common import ohlcv_payload, timeframe_list
 from app.core.deps import ActiveUser, DbSession
-from app.core.exceptions import NotFound
-from app.schemas.domain import CandleOut, PriceBoardItem, SymbolOut
+from app.schemas.domain import PriceBoardItem, SymbolOut, TimeframeOut
 from app.services import market_data
 
 router = APIRouter(prefix="/market", tags=["customer-market"])
@@ -67,25 +67,33 @@ def price_board(
     }
 
 
+@router.get("/timeframes", response_model=list[TimeframeOut])
+def list_timeframes(user: ActiveUser) -> list[TimeframeOut]:
+    """Các khung thời gian biểu đồ vẽ được — nguồn cho hàng nút 1m · 5m · … · 1M.
+
+    Đọc từ máy chủ chứ không viết cứng trong giao diện: bỏ một khung khỏi danh mục mà hàng nút
+    vẫn còn nó thì người dùng bấm vào và nhận biểu đồ trắng, không kèm lời giải thích nào.
+    """
+    return [TimeframeOut.model_validate(tf) for tf in timeframe_list()]
+
+
 @router.get("/ohlcv", response_model=dict)
 def ohlcv(
     symbol: str,
     user: ActiveUser,
     db: DbSession,
+    resolution: str = Query(default="1D", description="1m · 3m · 5m · 15m · 30m · 1h · 2h · 4h · 1D · 1W · 1M"),
     date_from: date | None = None,
     date_to: date | None = None,
+    before: datetime | None = Query(
+        default=None,
+        description="Chỉ lấy nến mở trước mốc này — dùng để cuộn ngược về quá khứ",
+    ),
     limit: int = Query(default=400, ge=10, le=2000),
 ) -> dict:
-    """Nến ngày của một mã — nguồn dữ liệu cho biểu đồ."""
-    candles = market_data.get_candles(
-        db, symbol, date_from=date_from, date_to=date_to, limit=limit
+    """Nến của một mã ở một khung thời gian — nguồn dữ liệu cho biểu đồ."""
+    return ohlcv_payload(
+        db, symbol, resolution,
+        date_from=date_from, date_to=date_to, before=before, limit=limit,
     )
-    if not candles:
-        raise NotFound(f"Chưa có dữ liệu giá cho mã {symbol.upper()}", "NO_PRICE_DATA")
 
-    return {
-        "symbol": symbol.upper(),
-        "resolution": "D",
-        "candles": [CandleOut.model_validate(c) for c in candles],
-        "attribution": market_data.attribution(),
-    }

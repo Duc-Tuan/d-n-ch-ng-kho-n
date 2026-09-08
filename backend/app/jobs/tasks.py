@@ -385,6 +385,13 @@ def job_cleanup(run_date: date | None = None, triggered_by: str = "scheduler",
             TelegramDailyCounter.send_date < run_date - timedelta(days=60)
         ).delete()
 
+        # Nến trong ngày quá hạn giữ. Hạn của từng khung khai báo ở `market_data.timeframes`.
+        # Không dọn thì riêng khung 1 phút của một danh mục vừa phải cũng thêm hàng chục nghìn
+        # dòng mỗi phiên, mãi mãi, để phục vụ một khung gần như không ai kéo quá vài tuần.
+        from app.services.market_data import bars as bars_store
+
+        pruned = bars_store.prune(db)
+
         _finish_job(
             db, job, SyncJobStatus.SUCCESS,
             {
@@ -393,6 +400,7 @@ def job_cleanup(run_date: date | None = None, triggered_by: str = "scheduler",
                 "sessions_deleted": sessions,
                 "unverified_purged": len(stale_users),
                 "telegram_counters_deleted": counters,
+                "bars_pruned": pruned["deleted"],
             },
         )
 
@@ -680,6 +688,13 @@ def job_sync_market(run_date: date | None = None, triggered_by: str = "scheduler
     Chỉ lấy 30 phiên gần nhất chứ không phải toàn bộ lịch sử: `sync_ohlcv_batch` đồng bộ tăng
     dần từ `last_ohlcv_date`, khoảng đệm 30 ngày là để bù những ngày máy chủ không chạy.
     Nạp lịch sử lần đầu là việc của `python -m app.scripts.backfill_ohlcv`.
+
+    Ngoài nến ngày, job còn tải các khung trong ngày khai báo ở `MARKET_INTRADAY_TIMEFRAMES`.
+    Với nến ngày thì bỏ lỡ một phiên chỉ là chậm — lần chạy sau lấy bù được. Với khung trong
+    ngày thì **bỏ lỡ là mất hẳn**: nhà cung cấp chỉ phục vụ một cửa sổ trượt vài trăm nến gần
+    đây và trả `no_data` cho mọi khoảng quá khứ, nên phần lịch sử rơi ra ngoài cửa sổ đó không
+    có đường nào lấy lại. Khung 1 phút chỉ có khoảng bốn phiên đệm — job dừng một tuần là thủng
+    một lỗ vĩnh viễn trên biểu đồ 1 phút.
     """
     from app.models.market import Symbol
     from app.services import market_data
@@ -707,10 +722,16 @@ def job_sync_market(run_date: date | None = None, triggered_by: str = "scheduler
             for s in db.scalars(select(Symbol).where(Symbol.is_active.is_(True))).all()
         ]
 
+    codes = market_data.timeframes.configured()
+
     # Tách phiên khác cho phần tải giá — vòng lặp dài, không nên giữ một transaction xuyên suốt.
     with session_scope() as db:
         price_result = market_data.sync_ohlcv_batch(
-            db, symbols, days=30, delay_seconds=settings.market_sync_delay_seconds
+            db,
+            symbols,
+            timeframes=codes,
+            days=30,
+            delay_seconds=settings.market_sync_delay_seconds,
         )
 
     with session_scope() as db:
@@ -729,8 +750,9 @@ def job_sync_market(run_date: date | None = None, triggered_by: str = "scheduler
 
         if price_result["failed"] > price_result["total"] * 0.1:
             notification_service.notify_admins(
-                "Đồng bộ giá có nhiều mã lỗi",
-                f"{price_result['failed']}/{price_result['total']} mã không lấy được giá. "
+                "Đồng bộ giá có nhiều lượt lỗi",
+                f"{price_result['failed']}/{price_result['total']} lượt (mã × khung) không lấy "
+                f"được giá. Các khung đã chạy: {', '.join(price_result['timeframes'])}. "
                 "Kiểm tra nhà cung cấp dữ liệu có đổi endpoint không.",
             )
 

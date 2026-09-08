@@ -14,6 +14,7 @@ import { createMapper } from '@/lib/indicators/coords';
 import type { Candle } from '@/lib/indicators/math';
 import type { IndicatorShapes, IndicatorTable } from '@/lib/indicators/types';
 
+import { isChartLive } from './chartLifecycle';
 import { chartColor } from './chartTheme';
 
 const DASH: Record<string, number[]> = {
@@ -50,7 +51,9 @@ export function ShapesLayer({
 
   const render = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !chart || !series) return;
+    // `isChartLive` chứ không phải `chart != null`: biểu đồ có thể đã bị gỡ mà prop vẫn giữ
+    // nguyên handle cũ — xem `chartLifecycle`. Gọi vào đó là ném lỗi, không phải trả về rỗng.
+    if (!canvas || !isChartLive(chart) || !series) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -167,7 +170,7 @@ export function ShapesLayer({
 
   // Kéo hoặc phóng thì toạ độ đổi hết — phải vẽ lại.
   useEffect(() => {
-    if (!chart) return;
+    if (!isChartLive(chart)) return;
     const timeScale = chart.timeScale();
     const handler = () => render();
     timeScale.subscribeVisibleLogicalRangeChange(handler);

@@ -9,12 +9,17 @@ from app.services.market_data.base import (
     MarketDataProvider,
     SymbolInfo,
 )
-from app.services.market_data import fullsync
+from app.services.market_data import bars, fullsync, timeframes
+from app.services.market_data.bars import (
+    Candle,
+    read_bars,
+    sync_bars,
+)
+from app.services.market_data import providers
 from app.services.market_data.providers import attribution, get_provider
 from app.services.market_data.service import (
     add_symbol,
     coverage_stats,
-    get_candles,
     get_price_board,
     list_symbol_codes,
     lookup_listing,
@@ -27,6 +32,7 @@ from app.services.market_data.service import (
 
 __all__ = [
     "Bar",
+    "Candle",
     "SymbolInfo",
     "MarketDataProvider",
     "MarketDataError",
@@ -35,7 +41,8 @@ __all__ = [
     "sync_symbols",
     "sync_ohlcv",
     "sync_ohlcv_batch",
-    "get_candles",
+    "sync_bars",
+    "read_bars",
     "search_symbols",
     "list_symbol_codes",
     "get_price_board",
@@ -43,5 +50,8 @@ __all__ = [
     "add_symbol",
     "remove_symbol",
     "coverage_stats",
+    "bars",
+    "providers",
     "fullsync",
+    "timeframes",
 ]

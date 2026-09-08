@@ -2,9 +2,9 @@
 
 Vì sao cần một module riêng thay vì gọi thẳng `sync_ohlcv_batch` trong `BackgroundTasks`:
 
-* Mẻ toàn thị trường chạy hàng nghìn mã, mỗi mã một lời gọi mạng — tính bằng chục phút. Chạy
-  trong `BackgroundTasks` là chiếm một worker của chính tiến trình đang phục vụ request suốt
-  chừng ấy thời gian.
+* Mẻ toàn thị trường chạy hàng nghìn **lượt (mã × khung)**, mỗi lượt một lời gọi mạng — tính
+  bằng chục phút, và nhân thêm số khung được chọn. Chạy trong `BackgroundTasks` là chiếm một
+  worker của chính tiến trình đang phục vụ request suốt chừng ấy thời gian.
 * Người bấm nút cần biết **đang tới đâu**. Một thanh tiến độ đứng im và một mẻ đã treo trông
   giống hệt nhau nếu không có số mã đã xử lý và tên mã đang tải.
 * Bấm hai lần không được chạy hai mẻ: hai luồng cùng gọi nhà cung cấp cho cùng danh sách mã là
@@ -29,6 +29,7 @@ from app.core.database import session_scope
 from app.core.datetime_utils import utcnow
 from app.core.exceptions import Conflict
 from app.models.market import Symbol
+from app.services.market_data import timeframes as tfs
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,10 @@ class _Progress:
     skipped: int = 0
     rows_written: int = 0
     current_symbol: str | None = None
+    #: Khung đang tải. Một mẻ đa khung chạy gấp nhiều lần số mã, nên chỉ hiện tên mã thì thanh
+    #: tiến độ trông như đang lặp lại chính nó và người xem tưởng mẻ bị kẹt.
+    current_timeframe: str | None = None
+    timeframes: list[str] = field(default_factory=lambda: [tfs.DAILY])
     started_at: datetime | None = None
     finished_at: datetime | None = None
     triggered_by: str | None = None
@@ -98,6 +103,8 @@ def snapshot() -> dict:
             "skipped": _state.skipped,
             "rows_written": _state.rows_written,
             "current_symbol": _state.current_symbol,
+            "current_timeframe": _state.current_timeframe,
+            "timeframes": list(_state.timeframes),
             "percent": percent,
             "started_at": _state.started_at,
             "finished_at": _state.finished_at,
@@ -112,7 +119,9 @@ def snapshot() -> dict:
         }
 
 
-def start(*, days: int, force_full: bool, triggered_by: str) -> dict:
+def start(
+    *, days: int, force_full: bool, triggered_by: str, timeframes: list[str] | None = None
+) -> dict:
     """Khởi động một mẻ đồng bộ toàn danh mục. Trả về ảnh chụp trạng thái ban đầu.
 
     Ném `Conflict` nếu đang có mẻ chạy — người bấm nhận thông báo rõ ràng thay vì âm thầm sinh
@@ -127,6 +136,13 @@ def start(*, days: int, force_full: bool, triggered_by: str) -> dict:
                 "MARKET_SYNC_RUNNING",
             )
 
+        codes = sorted(
+            tfs.parse_list(timeframes, default=(tfs.DAILY,)), key=tfs.sort_key
+        )
+        # Khung suy ra không có gì để tải — giữ lại trong danh sách thì tổng số lượt hiện trên
+        # màn hình lớn hơn số lượt thật và tiến độ không bao giờ chạm 100%.
+        codes = [c for c in codes if not tfs.get(c).derived] or [tfs.DAILY]
+
         _stop.clear()
         # Thay hẳn bản ghi thay vì đặt lại từng trường: quên một trường là mẻ mới hiện số đếm
         # của mẻ cũ, kiểu sai lặng lẽ nhất mà giao diện không có cách nào lộ ra.
@@ -136,12 +152,13 @@ def start(*, days: int, force_full: bool, triggered_by: str) -> dict:
             triggered_by=triggered_by,
             days=days,
             force_full=force_full,
+            timeframes=codes,
             message="Đang lấy danh sách mã…",
         )
 
     _thread = threading.Thread(
         target=_run,
-        args=(days, force_full),
+        args=(days, force_full, codes),
         name="market-fullsync",
         daemon=True,
     )
@@ -162,6 +179,7 @@ def request_stop() -> dict:
 def _on_progress(event: dict) -> None:
     with _lock:
         _state.current_symbol = event["symbol"]
+        _state.current_timeframe = event.get("timeframe")
         _state.total = event["total"]
         _state.processed = event["processed"]
         _state.synced = event["synced"]
@@ -178,10 +196,11 @@ def _finish(state: str, message: str) -> None:
         _state.state = state
         _state.message = message
         _state.current_symbol = None
+        _state.current_timeframe = None
         _state.finished_at = utcnow()
 
 
-def _run(days: int, force_full: bool) -> None:
+def _run(days: int, force_full: bool, timeframes: list[str]) -> None:
     """Thân luồng nền.
 
     Mọi lối thoát đều phải để lại một trạng thái đọc được trên giao diện: một luồng chết lặng lẽ
@@ -200,8 +219,11 @@ def _run(days: int, force_full: bool) -> None:
             )
 
         with _lock:
-            _state.total = len(symbols)
-            _state.message = f"Đang đồng bộ {len(symbols)} mã…"
+            _state.total = len(symbols) * len(timeframes)
+            _state.message = (
+                f"Đang đồng bộ {len(symbols)} mã × {len(timeframes)} khung "
+                f"({', '.join(timeframes)})…"
+            )
 
         if not symbols:
             _finish("done", "Danh mục không có mã nào đang theo dõi")
@@ -211,6 +233,7 @@ def _run(days: int, force_full: bool) -> None:
             result = sync_ohlcv_batch(
                 db,
                 symbols,
+                timeframes=timeframes,
                 days=days,
                 force_full=force_full,
                 delay_seconds=settings.market_sync_delay_seconds,
@@ -219,16 +242,16 @@ def _run(days: int, force_full: bool) -> None:
             )
 
         summary = (
-            f"{result['synced']} mã thành công, {result['failed']} mã lỗi, "
+            f"{result['synced']} lượt thành công, {result['failed']} lượt lỗi, "
             f"{result['rows_written']:,} nến ghi thêm"
         )
         if result["stopped"]:
             _finish(
                 "stopped",
-                f"Đã dừng sau {result['processed']}/{result['total']} mã · {summary}",
+                f"Đã dừng sau {result['processed']}/{result['total']} lượt · {summary}",
             )
         else:
-            _finish("done", f"Hoàn tất {result['processed']} mã · {summary}")
+            _finish("done", f"Hoàn tất {result['processed']} lượt · {summary}")
 
     except Exception as exc:  # noqa: BLE001
         log.exception("Mẻ đồng bộ toàn danh mục hỏng")

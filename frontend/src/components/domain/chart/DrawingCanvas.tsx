@@ -24,6 +24,7 @@ import { drawDrawing, type Pixel, type RenderPalette } from '@/lib/drawings/rend
 import { TOOL_META, type Drawing, type Point } from '@/lib/drawings/types';
 import type { Candle } from '@/lib/indicators/math';
 
+import { isChartLive } from './chartLifecycle';
 import { chartColor, down, up } from './chartTheme';
 import { DrawingTextModal } from './DrawingTextModal';
 import type { DrawingStore } from './useDrawings';
@@ -116,7 +117,8 @@ export function DrawingCanvas({
   const { activeTool, drawings, selectedId, hideAll, lockAll } = store;
 
   const getMapper = useCallback(() => {
-    if (!chart || !series || !candlesRef.current.length) return null;
+    // Cùng lý do như `ShapesLayer`: biểu đồ đã gỡ vẫn còn nguyên handle trong prop.
+    if (!isChartLive(chart) || !series || !candlesRef.current.length) return null;
     return createDrawingMapper(chart, series, candlesRef.current);
   }, [chart, series]);
 
@@ -215,7 +217,7 @@ export function DrawingCanvas({
 
   // Vẽ lại khi người dùng kéo hoặc phóng biểu đồ.
   useEffect(() => {
-    if (!chart) return;
+    if (!isChartLive(chart)) return;
     const timeScale = chart.timeScale();
     const onRangeChange = () => render();
     timeScale.subscribeVisibleLogicalRangeChange(onRangeChange);
@@ -231,7 +233,7 @@ export function DrawingCanvas({
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !chart || !series) return;
+    if (!host || !isChartLive(chart) || !series) return;
 
     const pixelOf = (event: PointerEvent): Pixel => {
       const rect = host.getBoundingClientRect();

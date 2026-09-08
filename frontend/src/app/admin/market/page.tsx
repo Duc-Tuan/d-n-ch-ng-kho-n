@@ -66,6 +66,24 @@ type SyncLog = {
   created_at: string;
 };
 
+/** Độ phủ của một khung — khớp `market_data.bars.coverage()`. */
+type TimeframeCoverage = {
+  code: string;
+  label: string;
+  short_label: string;
+  seconds: number;
+  intraday: boolean;
+  /** Khung gộp lúc đọc: số liệu của nó là số liệu khung gốc, không có bảng lưu riêng. */
+  derived: boolean;
+  derive_from: string | null;
+  retention_days: number | null;
+  bars: number;
+  symbols: number;
+  oldest: string | null;
+  latest: string | null;
+  sync_enabled: boolean;
+};
+
 type Overview = {
   symbols_total: number;
   symbols_with_data: number;
@@ -75,6 +93,7 @@ type Overview = {
   symbols_stale: number;
   stale_after_days: number;
   by_exchange: Array<{ exchange: string; total: number; with_data: number }>;
+  timeframes: TimeframeCoverage[];
   last_sync: SyncLog | null;
 };
 
@@ -88,6 +107,8 @@ type FullSyncProgress = {
   skipped: number;
   rows_written: number;
   current_symbol: string | null;
+  current_timeframe: string | null;
+  timeframes: string[];
   percent: number;
   started_at: string | null;
   finished_at: string | null;
@@ -135,7 +156,7 @@ export default function AdminMarketPage() {
 
   return (
     <div className="flex h-full flex-col space-y-3">
-      <PageHeader
+      {/* <PageHeader
         title="Dữ liệu thị trường"
         description="Danh mục mã niêm yết, độ phủ dữ liệu giá và nhật ký các mẻ đồng bộ"
         infoTitle="Vì sao cần theo dõi"
@@ -147,7 +168,7 @@ export default function AdminMarketPage() {
             <strong>Chậm dữ liệu</strong> trước khi tin vào thống kê.
           </p>
         }
-      />
+      /> */}
 
       <Tabs items={TABS} active={tab} onChange={setTab} />
 
@@ -177,7 +198,8 @@ function OverviewTab({ canRun }: { canRun: boolean }) {
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pt-1">
       <OverviewCards overview={overview} />
-      <FullSyncCard canRun={canRun} onDone={refresh} />
+      <FullSyncCard canRun={canRun} timeframes={overview?.timeframes ?? []} onDone={refresh} />
+      <TimeframeCoverageCard overview={overview} />
       <SyncPanel overview={overview} canRun={canRun} onDone={refresh} />
     </div>
   );
@@ -213,6 +235,77 @@ function OverviewCards({ overview }: { overview: Overview | undefined }) {
         icon={<Icon name="calendar" size={18} />}
       />
     </div>
+  );
+}
+
+/**
+ * Độ phủ của **từng khung thời gian**.
+ *
+ * Con số tổng che đúng chỗ cần nhìn: một hệ thống có 500.000 nến ngày đầy đủ vẫn có thể thủng
+ * hẳn khung 1 giờ, và cách duy nhất phát hiện là bấm sang biểu đồ 1 giờ rồi thấy nó trống.
+ *
+ * Cột "cũ nhất" quan trọng hơn vẻ ngoài của nó với khung trong ngày: nhà cung cấp chỉ phục vụ
+ * một cửa sổ trượt vài trăm nến gần đây và trả rỗng cho mọi khoảng quá khứ, nên phần lịch sử
+ * này **chỉ dày lên nhờ chạy đồng bộ đều đặn** — không có đường nạp bù như nến ngày.
+ */
+function TimeframeCoverageCard({ overview }: { overview: Overview | undefined }) {
+  const rows = overview?.timeframes ?? [];
+  if (!rows.length) return null;
+
+  return (
+    <Card padded={false}>
+      <div className="p-4 pb-2">
+        <CardHeader
+          title="Độ phủ theo khung thời gian"
+          description="Khung ghi “gộp” không chiếm chỗ trong cơ sở dữ liệu — nó được dựng lại từ khung gốc mỗi lần đọc, nên luôn khớp với khung gốc."
+        />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-y border-line bg-ink-50 text-xs">
+            <tr>
+              <th className="px-4 py-2 text-left font-medium uppercase text-ink-500">Khung</th>
+              <th className="px-4 py-2 text-left font-medium uppercase text-ink-500">Nguồn</th>
+              <th className="px-4 py-2 text-right font-medium uppercase text-ink-500">Nến</th>
+              <th className="px-4 py-2 text-right font-medium uppercase text-ink-500">Mã</th>
+              <th className="px-4 py-2 text-left font-medium uppercase text-ink-500">Cũ nhất</th>
+              <th className="px-4 py-2 text-left font-medium uppercase text-ink-500">Mới nhất</th>
+              <th className="px-4 py-2 text-left font-medium uppercase text-ink-500">Giữ lại</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.code} className="border-b border-line last:border-0">
+                <td className="px-4 py-2">
+                  <span className="font-medium tabular-nums text-ink-900">{row.short_label}</span>
+                  <span className="ml-2 text-xs text-ink-500">{row.label}</span>
+                </td>
+                <td className="px-4 py-2">
+                  {row.derived ? (
+                    <Badge tone="gray">gộp từ {row.derive_from}</Badge>
+                  ) : row.sync_enabled ? (
+                    <Badge tone="green">đang đồng bộ</Badge>
+                  ) : (
+                    <Badge tone="amber">chưa bật</Badge>
+                  )}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums">{formatNumber(row.bars)}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{formatNumber(row.symbols)}</td>
+                <td className="px-4 py-2 text-xs text-ink-600">
+                  {row.oldest ? formatDateTime(row.oldest) : '—'}
+                </td>
+                <td className="px-4 py-2 text-xs text-ink-600">
+                  {row.latest ? formatDateTime(row.latest) : '—'}
+                </td>
+                <td className="px-4 py-2 text-xs text-ink-500">
+                  {row.derived ? '—' : row.retention_days ? `${row.retention_days} ngày` : 'vĩnh viễn'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
@@ -359,10 +452,35 @@ function SyncPanel({
  * chủ chứ không phải tab đang mở, đóng trang rồi mở lại vẫn thấy đúng mẻ đang chạy, và hai người
  * trực cùng nhìn thấy một con số.
  */
-function FullSyncCard({ canRun, onDone }: { canRun: boolean; onDone: () => void }) {
+function FullSyncCard({
+  canRun,
+  timeframes,
+  onDone,
+}: {
+  canRun: boolean;
+  timeframes: TimeframeCoverage[];
+  onDone: () => void;
+}) {
   const toast = useToast();
   const [mode, setMode] = useState('incremental');
   const [confirmFull, setConfirmFull] = useState(false);
+
+  /* Chỉ khung **tự tải về** mới chọn được. Khung gộp (4h, 1W, 1M) không có gì để tải — bày nó
+     ra đây thì người vận hành tích vào rồi ngồi chờ một phần việc không tồn tại. */
+  const selectable = timeframes.filter((tf) => !tf.derived);
+
+  /* Mặc định tích **hết khung đang bật**, đúng như tên nút và đúng như job hằng ngày chạy.
+     Để mặc định là mỗi nến ngày thì người vận hành bấm "Đồng bộ tất cả", thấy báo hoàn tất,
+     rồi mở biểu đồ 1 giờ ra vẫn trống — mà không có gì trên màn hình nói vì sao. */
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const enabled = selectable.filter((tf) => tf.sync_enabled).map((tf) => tf.code);
+  const chosen = picked ?? enabled;
+
+  const toggleTimeframe = (code: string) =>
+    setPicked((current) => {
+      const list = current ?? enabled;
+      return list.includes(code) ? list.filter((c) => c !== code) : [...list, code];
+    });
 
   const { data: progress, refresh } = useApiQuery<FullSyncProgress>(
     `${ADMIN}/market/sync-progress`,
@@ -371,7 +489,11 @@ function FullSyncCard({ canRun, onDone }: { canRun: boolean; onDone: () => void 
   );
 
   const start = useApiMutation<FullSyncProgress, string>((runMode) =>
-    api.post<FullSyncProgress>(`${ADMIN}/market/sync-all`, { mode: runMode, days: 30 }),
+    api.post<FullSyncProgress>(`${ADMIN}/market/sync-all`, {
+      mode: runMode,
+      days: 30,
+      timeframes: chosen,
+    }),
   );
   const stop = useApiMutation<FullSyncProgress, void>(() =>
     api.post<FullSyncProgress>(`${ADMIN}/market/sync-all/stop`),
@@ -390,6 +512,10 @@ function FullSyncCard({ canRun, onDone }: { canRun: boolean; onDone: () => void 
   }, [running, onDone]);
 
   const launch = async (runMode: string) => {
+    if (!chosen.length) {
+      toast.error('Chọn ít nhất một khung thời gian để đồng bộ.');
+      return;
+    }
     const result = await start.mutate(runMode);
     if (result) {
       toast.success('Đã bắt đầu đồng bộ. Tiến độ hiện ngay bên dưới.');
@@ -423,6 +549,7 @@ function FullSyncCard({ canRun, onDone }: { canRun: boolean; onDone: () => void 
                 <Button
                   size="sm"
                   variant="outline"
+                  className="h-11"
                   loading={stop.loading}
                   disabled={progress?.stop_requested}
                   leftIcon={<Icon name="close" size={15} />}
@@ -442,6 +569,7 @@ function FullSyncCard({ canRun, onDone }: { canRun: boolean; onDone: () => void 
               ) : (
                 <Button
                   size="sm"
+                  className='h-11'
                   loading={start.loading}
                   leftIcon={<Icon name="refresh" size={15} />}
                   onClick={() => {
@@ -466,6 +594,30 @@ function FullSyncCard({ canRun, onDone }: { canRun: boolean; onDone: () => void 
         </p>
       )}
 
+      {canRun && selectable.length > 0 && (
+        <div className="space-y-1.5 rounded-lg border border-ink-200 bg-ink-50/60 p-3 mb-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-xs font-medium uppercase text-ink-500">Khung thời gian</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              {selectable.map((tf) => (
+                <Checkbox
+                  key={tf.code}
+                  label={tf.short_label}
+                  checked={chosen.includes(tf.code)}
+                  disabled={running}
+                  onChange={() => toggleTimeframe(tf.code)}
+                />
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-ink-500">
+            Mẻ chạy {formatNumber(chosen.length)} lượt cho mỗi mã, nên bỏ bớt một khung là
+            giảm đi chừng ấy thời gian. Khung gộp (4h · 1W · 1M) không có ở đây vì chúng được
+            dựng lại từ khung gốc mỗi lần đọc, không tốn lượt tải nào.
+          </p>
+        </div>
+      )}
+
       <FullSyncProgressView progress={progress} meta={meta} />
 
       <ConfirmDialog
@@ -479,6 +631,12 @@ function FullSyncCard({ canRun, onDone }: { canRun: boolean; onDone: () => void 
             chặn tạm nếu bị gọi quá dày. Chỉ dùng khi nghi ngờ dữ liệu cũ bị hỏng hoặc thủng
             khoảng — việc thường ngày hãy chọn <strong>Bù phần thiếu</strong>. Dừng giữa chừng
             được, và phần đã tải vẫn giữ nguyên.
+            <br />
+            <br />
+            Lưu ý: “tải lại toàn bộ” chỉ có tác dụng với <strong>nến ngày</strong>. Khung trong
+            ngày luôn chỉ lấy được cửa sổ vài trăm nến gần đây mà nhà cung cấp phục vụ — mọi
+            khoảng quá khứ đều trả về rỗng, nên phần lịch sử trong ngày đã mất thì không nạp lại
+            được bằng nút này.
           </>
         }
         confirmLabel="Tải lại toàn bộ"
@@ -519,15 +677,29 @@ function FullSyncProgressView({
           {/* Tên mã đang tải là bằng chứng duy nhất cho thấy mẻ còn sống chứ không phải đã treo. */}
           {running && progress.current_symbol && (
             <span className="text-sm text-ink-600">
-              Đang tải <strong className="text-ink-900">{progress.current_symbol}</strong>…
+              Đang tải <strong className="text-ink-900">{progress.current_symbol}</strong>
+              {progress.current_timeframe && (
+                <>
+                  {' '}
+                  khung <strong className="text-ink-900">{progress.current_timeframe}</strong>
+                </>
+              )}
+              …
             </span>
           )}
           {progress.triggered_by && (
             <span className="text-xs text-ink-500">· do {progress.triggered_by} chạy</span>
           )}
         </div>
+        {/* Đơn vị là **lượt (mã × khung)**, không phải mã: chạy 150 mã trên 5 khung là 750
+            lượt, và ghi "150" ở đây thì thanh tiến độ đứng im suốt bốn phần năm thời gian. */}
         <p className="text-sm font-medium tabular-nums">
-          {formatNumber(progress.processed)} / {formatNumber(progress.total)} mã · {percent}%
+          {formatNumber(progress.processed)} / {formatNumber(progress.total)} lượt · {percent}%
+          {progress.timeframes?.length > 1 && (
+            <span className="ml-1 font-normal text-ink-500">
+              ({progress.timeframes.join(' · ')})
+            </span>
+          )}
         </p>
       </div>
 
@@ -560,7 +732,10 @@ function FullSyncProgressView({
         </div>
         <div>
           <dt className="text-xs text-ink-500">Bỏ qua</dt>
-          <dd className="font-medium tabular-nums" title="Mã đã có dữ liệu tới phiên gần nhất">
+          <dd
+            className="font-medium tabular-nums"
+            title="Đã có dữ liệu tới phiên gần nhất, hoặc nguồn không có nến nào cho khung đó"
+          >
             {formatNumber(progress.skipped)}
           </dd>
         </div>

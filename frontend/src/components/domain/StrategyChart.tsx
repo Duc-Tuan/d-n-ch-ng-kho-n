@@ -30,6 +30,8 @@ import { formatDateTime } from '@/lib/datetime';
 import { formatNumber, formatR } from '@/lib/format';
 import type { Candle, Signal } from '@/types';
 import { Alert, Badge, Modal } from '@/components/ui';
+
+import { removeChart } from './chart/chartLifecycle';
 import { chartColors, down, up } from './chart/chartTheme';
 
 type Props = {
@@ -201,7 +203,7 @@ export function StrategyChart({
 
     return () => {
       window.removeEventListener('resize', resize);
-      chart.remove();
+      removeChart(chart);
       chartRef.current = null;
       seriesRef.current = null;
     };

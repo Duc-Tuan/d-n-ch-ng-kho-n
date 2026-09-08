@@ -13,8 +13,10 @@ from app.models.content import (
 from app.models.market import (
     CorporateAction,
     MarketSyncLog,
+    OhlcvBar,
     OhlcvDaily,
     Symbol,
+    SymbolTimeframeSync,
 )
 from app.models.media import MediaAsset
 from app.models.news import NewsItem
@@ -79,7 +81,8 @@ __all__ = [
     # nav
     "NavDaily", "SyncJob", "SyncUnmatched", "ComplianceEvent", "TradingCalendar",
     # market data
-    "Symbol", "OhlcvDaily", "CorporateAction", "MarketSyncLog",
+    "Symbol", "OhlcvDaily", "OhlcvBar", "SymbolTimeframeSync", "CorporateAction",
+    "MarketSyncLog",
     "MediaAsset",
     # staff
     "Staff", "Role", "Permission", "RolePermission", "StaffRole", "StaffSession",

@@ -28,6 +28,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Badge, Card, Disclaimer, EmptyState, Icon, Table, type Column } from '@/components/ui';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
+
+import { removeChart } from './chart/chartLifecycle';
 import { formatDate } from '@/lib/datetime';
 import { formatNumber } from '@/lib/format';
 import type { Candle, OhlcvResponse, RunTrade, StrategyRunResult } from '@/types';
@@ -261,7 +263,10 @@ function RunChart({
     return () => {
       window.removeEventListener('resize', resize);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange);
-      chart.remove();
+      // Biểu đồ này chưa có lớp phủ nào cầm handle của nó, nhưng vẫn đi qua `removeChart` để
+      // quy ước "không gọi thẳng `chart.remove()`" đúng ở mọi chỗ — thêm một lớp phủ sau này
+      // thì nó đã an toàn sẵn, thay vì lặp lại đúng lỗi cũ ở một file khác.
+      removeChart(chart);
       chartRef.current = null;
       priceRef.current = null;
       overlayRefs.current = [];

@@ -583,12 +583,37 @@ class SymbolOut(ORMModel):
 
 
 class CandleOut(ORMModel):
+    """Một nến trên đường trả về.
+
+    Có **cả hai** mốc thời gian, và đó không phải dư thừa:
+
+    * `time` — mốc mở nến ở UTC, thứ duy nhất định vị được nến trong ngày (09:15, 09:30…).
+    * `trade_date` — ngày giao dịch theo giờ Việt Nam. Giữ lại vì mọi thứ đang đọc trường này:
+      biểu đồ cũ, phần khử trùng khi cuộn tải thêm, và ảnh chụp chỉ báo gửi cho AI. Bỏ đi là
+      buộc phải sửa cùng lúc mọi nơi đó chỉ để đổi tên một trường.
+    """
+
+    time: datetime
     trade_date: date
     open: Money
     high: Money
     low: Money
     close: Money
     volume: int
+
+
+class TimeframeOut(BaseModel):
+    """Một khung thời gian, cho hàng nút chọn khung trên biểu đồ."""
+
+    code: str
+    label: str
+    short_label: str
+    seconds: int
+    intraday: bool
+    #: Khung được gộp lúc đọc từ khung nhỏ hơn, không có bảng lưu riêng.
+    derived: bool
+    derive_from: str | None = None
+    retention_days: int | None = None
 
 
 class PriceBoardItem(BaseModel):

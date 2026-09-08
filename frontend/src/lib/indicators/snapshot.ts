@@ -47,10 +47,17 @@ function num(value: number | string | null | undefined): number {
  *
  * Một chỗ đổi duy nhất cho cả biểu đồ lẫn ảnh chụp gửi AI: hai cách đổi khác nhau nghĩa là mô
  * hình đọc một chuỗi nến, người dùng nhìn một chuỗi khác.
+ *
+ * `tzOffsetSeconds` chỉ để **hiển thị**: `lightweight-charts` luôn in nhãn thời gian theo UTC,
+ * nên nến 09:15 giờ Việt Nam sẽ hiện thành 02:15 nếu không cộng thêm. Phép cộng này không đụng
+ * tới thứ tự hay giá trị nến, nên mọi chỉ báo tính ra con số y hệt — và bỏ trống (nến ngày,
+ * ảnh chụp gửi AI) thì hành vi giữ nguyên như trước.
  */
-export function toIndicatorCandles(rows: ApiCandle[]): Candle[] {
+export function toIndicatorCandles(rows: ApiCandle[], tzOffsetSeconds = 0): Candle[] {
   return rows.map((c) => ({
-    time: Math.floor(new Date(c.trade_date).getTime() / 1000),
+    // `time` là mốc mở nến ở UTC; `trade_date` chỉ còn là đường lui cho dữ liệu cũ đã nằm
+    // sẵn trong bộ nhớ đệm của trình duyệt trước khi máy chủ bắt đầu trả `time`.
+    time: Math.floor(new Date(c.time ?? c.trade_date).getTime() / 1000) + tzOffsetSeconds,
     open: num(c.open),
     high: num(c.high),
     low: num(c.low),

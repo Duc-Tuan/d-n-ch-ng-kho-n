@@ -79,6 +79,68 @@ class OhlcvDaily(Base, IdMixin):
     )
 
 
+class OhlcvBar(Base, IdMixin):
+    """Nến của các khung **khác ngày**: 1m, 5m, 15m, 30m, 1h.
+
+    Vì sao không nhập chung vào `ohlcv_daily`: bảng đó là nguồn sự thật của chiến lược, backtest
+    và phân tích AI, khoá bởi `UNIQUE(symbol, trade_date)`. Nhét nến trong ngày vào đó là phá
+    chính ràng buộc đang giữ cho mỗi lần chạy chiến lược đọc đúng một nến mỗi phiên.
+
+    Khung suy ra (3m, 2h, 4h, 1W, 1M) **không** có dòng nào ở đây — chúng được gộp lúc đọc, xem
+    `app.services.market_data.timeframes`.
+    """
+
+    __tablename__ = "ohlcv_bars"
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: Mã khung theo `timeframes.TIMEFRAMES` — "1m", "5m", "15m", "30m", "1h".
+    timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
+    #: Mốc **mở** nến, lưu ở UTC theo BR-130. Nến 09:15 giờ Việt Nam nằm ở 02:15 UTC.
+    ts: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    open: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    high: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    low: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    close: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    volume: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="VPS")
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", "ts", name="uq_ohlcv_bar"),
+        # Truy vấn nóng: chuỗi nến của một mã ở một khung, mới nhất trước.
+        Index("ix_ohlcv_bar_symbol_tf_ts", "symbol", "timeframe", "ts"),
+        # Dọn dữ liệu quá hạn chạy `DELETE ... WHERE timeframe = ? AND ts < ?` — không có index
+        # này thì mỗi lần dọn là một lần quét toàn bảng hàng chục triệu dòng.
+        Index("ix_ohlcv_bar_tf_ts", "timeframe", "ts"),
+    )
+
+
+class SymbolTimeframeSync(Base, IdMixin):
+    """Mốc đồng bộ gần nhất của từng cặp (mã, khung).
+
+    Tách khỏi `symbols.last_ohlcv_date` vì một mã bây giờ có nhiều mốc chứ không còn một: khung
+    1 phút có thể đứng từ hôm qua trong khi khung 1 giờ vẫn mới. Gộp tất cả vào một cột thì màn
+    vận hành không còn phân biệt được khung nào đang thiếu.
+
+    `last_error` giữ lại lỗi gần nhất: một mã im lặng không có dữ liệu và một mã bị nguồn từ chối
+    trông giống hệt nhau trên bảng đếm, và đó là kiểu hỏng lặng lẽ nhất của cả phần dữ liệu.
+    """
+
+    __tablename__ = "symbol_timeframe_sync"
+
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
+
+    last_ts: Mapped[datetime | None] = mapped_column(DateTime)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_error: Mapped[str | None] = mapped_column(String(255))
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", name="uq_symbol_timeframe_sync"),
+    )
+
+
 class CorporateAction(Base, IdMixin, CreatedAtMixin):
     """BR-834 — chia tách, thưởng cổ phiếu, cổ tức tiền mặt đều làm gãy chuỗi giá.
 

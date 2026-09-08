@@ -21,6 +21,7 @@ import type { Candle } from '@/lib/indicators/math';
 import { getIndicator, instanceLabel } from '@/lib/indicators/registry';
 import type { IndicatorInstance, PlotDef } from '@/lib/indicators/types';
 
+import { removeChart } from './chartLifecycle';
 import { LINE_STYLE_MAP, PRICE_SCALE_MIN_WIDTH, baseChartOptions, chartColors } from './chartTheme';
 import { useElementSize } from './useElementSize';
 
@@ -97,7 +98,7 @@ export function IndicatorPane({
 
     return () => {
       handlers.current.onChartDestroy(chart);
-      chart.remove();
+      removeChart(chart);
       chartRef.current = null;
       seriesRef.current.clear();
     };

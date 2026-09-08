@@ -244,6 +244,7 @@ export default function MarketPage() {
               <PriceChart
                 symbol={selected}
                 candles={ohlcv.candles}
+                tzOffsetSeconds={ohlcv.tz_offset_seconds}
                 indicators={indicators}
                 attribution={ohlcv.attribution}
                 height={420}

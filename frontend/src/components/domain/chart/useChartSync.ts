@@ -22,6 +22,8 @@ import {
 } from 'lightweight-charts';
 import { useCallback, useMemo, useRef } from 'react';
 
+import { isChartLive } from './chartLifecycle';
+
 import { PRICE_SCALE_MIN_WIDTH } from './chartTheme';
 
 export interface ChartSync {
@@ -146,7 +148,9 @@ export function useChartSync(): ChartSync {
    * về mặc định của thư viện. Nên phải áp lại một lần nữa sau khi nó đã có nến.
    */
   const realign = useCallback(() => {
-    const [reference, ...others] = [...chartsRef.current.keys()];
+    // Lọc biểu đồ đã gỡ: cửa sổ chỉ báo tự huỷ đăng ký khi bị tắt, nhưng `realign` chạy trong
+    // `requestAnimationFrame` nên nó hoàn toàn có thể rơi vào sau lúc gỡ và trước lúc dọn.
+    const [reference, ...others] = [...chartsRef.current.keys()].filter(isChartLive);
     if (!reference || !others.length) return;
 
     const range = reference.timeScale().getVisibleLogicalRange();
