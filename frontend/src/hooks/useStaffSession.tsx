@@ -13,6 +13,8 @@ import useSWR from 'swr';
 import { ADMIN, ApiError, api } from '@/lib/api';
 import type { StaffProfile } from '@/types';
 
+import { useTokenRefresh } from './useTokenRefresh';
+
 type StaffContextValue = {
   staff: StaffProfile | null;
   loading: boolean;
@@ -41,6 +43,10 @@ export function StaffSessionProvider({ children }: { children: ReactNode }) {
     () => api.get<StaffProfile>(`${ADMIN}/auth/me`),
     { revalidateOnFocus: true, shouldRetryOnError: false, onError: () => undefined },
   );
+
+  // Ca trực của nhân viên dài hơn hạn token rất nhiều — không gia hạn thì cứ 30 phút lại phải
+  // đăng nhập lại giữa lúc đang làm việc.
+  useTokenRefresh('admin', Boolean(data) && !error);
 
   const logout = useCallback(async () => {
     try {

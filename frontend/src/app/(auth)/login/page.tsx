@@ -6,7 +6,7 @@ import { Suspense, useState } from 'react';
 
 import { Alert, Button, Card, Input, PasswordInput } from '@/components/ui';
 import { useAction, useFormErrors, useSession, useToast } from '@/hooks';
-import { CUSTOMER, api } from '@/lib/api';
+import { api, CUSTOMER, resetAuthRefresh } from '@/lib/api';
 import * as v from '@/lib/validation';
 import type { SessionResponse } from '@/types';
 
@@ -61,6 +61,10 @@ function LoginForm() {
 
     const result = await login.run({ email: email.trim(), password });
     if (!result) return;
+
+    // Phiên mới thì bật lại lưới an toàn tự làm mới token: nó đã bị tắt sau lần 401 gần nhất
+    // (thường là chính lượt `/auth/me` khi vào trang đăng nhập).
+    resetAuthRefresh();
 
     // Backend trả 200 kể cả khi bị BR-001 chặn, để FE hiển thị đúng lý do và lối đi tiếp.
     if (!result.access.allowed) {

@@ -62,7 +62,27 @@ const THEME_SCRIPT =
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="vi" data-theme="dark" className={inter.variable}>
+    /*
+     * `suppressHydrationWarning` ở đây là **bắt buộc**, không phải để giấu lỗi.
+     *
+     * Máy chủ dựng ra `data-theme="dark"` vì đó là giá trị viết cứng trong JSX. Script ở `<head>`
+     * chạy ngay lúc trình duyệt đọc tới, tức là **trước khi React hydrate**, và trên mọi đường
+     * dẫn `/admin/*` nó ghi đè thành `light`. React 19 so khớp cả thuộc tính của `<html>`, thấy
+     * lệch, rồi báo "Hydration failed... this tree will be regenerated on the client" — và dựng
+     * lại toàn bộ cây từ đầu ở phía trình duyệt.
+     *
+     * Ba cách sửa, và vì sao chọn cách này:
+     *   * Bỏ script đi, đổi bảng màu bằng `useEffect` — mất đúng thứ script sinh ra để tránh:
+     *     một cú chớp nền tối trên site quản trị ở mỗi lần tải trang.
+     *   * Bỏ `data-theme` khỏi JSX — lượt dựng trên máy chủ không còn bảng màu nào, và người
+     *     tắt JavaScript nhận một trang không màu.
+     *   * Nói với React rằng thuộc tính của riêng thẻ này được sửa có chủ đích — cách chuẩn cho
+     *     đúng tình huống "script chạy trước hydrate", và cũng là cách `next-themes` dùng.
+     *
+     * Cờ này chỉ bỏ qua khác biệt **của chính thẻ `<html>`**, không lan xuống các thẻ con: mọi
+     * lệch hydrate thật bên trong trang vẫn báo như thường.
+     */
+    <html lang="vi" data-theme="dark" className={inter.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>

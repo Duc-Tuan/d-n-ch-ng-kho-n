@@ -13,6 +13,8 @@ import useSWR from 'swr';
 import { ApiError, CUSTOMER, api } from '@/lib/api';
 import type { SessionResponse } from '@/types';
 
+import { useTokenRefresh } from './useTokenRefresh';
+
 type SessionContextValue = {
   session: SessionResponse | null;
   loading: boolean;
@@ -46,6 +48,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       onError: () => undefined,
     },
   );
+
+  // Gia hạn phiên trong lúc khách đang dùng. Chỉ chạy khi đã đăng nhập: gọi `/auth/refresh`
+  // cho khách vãng lai là một lượt gọi chắc chắn hỏng mỗi 20 phút.
+  useTokenRefresh('customer', Boolean(data) && !error);
 
   const logout = useCallback(async () => {
     try {

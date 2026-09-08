@@ -71,20 +71,102 @@ function buildUrl(path: string, params?: Record<string, unknown>): string {
   return qs ? `${url}?${qs}` : url;
 }
 
+/**
+ * Làm mới access token khi nó hết hạn giữa chừng — lưới an toàn cho `useTokenRefresh`.
+ *
+ * Cookie phiên là HttpOnly nên JavaScript **không đọc được hạn của nó**. Bộ đếm giờ ở
+ * `useTokenRefresh` làm mới trước khi hết hạn, nhưng nó không bao giờ đủ: trình duyệt bóp
+ * `setInterval` ở tab nền, máy ngủ thì đồng hồ đứng luôn, và người dùng mở lại tab sau hai
+ * tiếng là access token đã chết. Chốt phản ứng ở đây bắt đúng khoảnh khắc đó — một lần 401,
+ * làm mới, gọi lại — nên phiên không bao giờ đứt chỉ vì bộ đếm lỡ nhịp.
+ *
+ * Gộp mọi lượt làm mới đang bay vào **một** lượt gọi: một màn hình mở mười truy vấn song song
+ * thì cả mười cùng nhận 401, và mười lượt `/auth/refresh` cùng lúc là mười lần xoay vòng phiên
+ * trên máy chủ.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+/**
+ * Đã thử làm mới và thất bại → ngừng thử cho tới lần đăng nhập kế tiếp.
+ *
+ * Không có cờ này thì mỗi lượt gọi API của **khách chưa đăng nhập** đều kéo thêm một lượt
+ * `/auth/refresh` chắc chắn hỏng: 401 khi chưa đăng nhập là trạng thái bình thường, không phải
+ * sự cố cần chữa.
+ */
+let refreshBlocked = false;
+
+/** Gọi sau khi đăng nhập thành công — phiên mới thì lưới an toàn được bật lại. */
+export function resetAuthRefresh(): void {
+  refreshBlocked = false;
+}
+
+/** Đường `/auth/refresh` tương ứng với vùng của `path`, hoặc null nếu không nên tự làm mới. */
+function refreshEndpointFor(path: string): string | null {
+  const area = path.startsWith(ADMIN) ? ADMIN : path.startsWith(CUSTOMER) ? CUSTOMER : null;
+  if (!area) return null; // vùng public không có phiên để làm mới
+
+  const rest = path.slice(area.length);
+  // Chính các endpoint xác thực thì không tự làm mới: 401 ở `/login` là sai mật khẩu, ở
+  // `/refresh` là phiên đã chết — gọi lại chỉ nhân đôi số lượt.
+  //
+  // Ngoại lệ là `/auth/me`: đó là lượt gọi đầu tiên khi mở lại tab và cũng là chỗ quyết định
+  // "còn đăng nhập hay không". Bỏ nó ra ngoài thì người dùng quay lại sau 40 phút bị đá về màn
+  // đăng nhập dù refresh token vẫn còn hạn — đúng cái đang cần sửa.
+  if (rest.startsWith('/auth/') && rest !== '/auth/me') return null;
+
+  return `${area}/auth/refresh`;
+}
+
+async function tryRefresh(endpoint: string): Promise<boolean> {
+  if (refreshBlocked) return false;
+
+  const inflight =
+    refreshInFlight ??
+    (refreshInFlight = fetch(buildUrl(endpoint), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    })
+      .then((response) => {
+        // Refresh token cũng hết hạn hoặc phiên bị thu hồi: phiên đã kết thúc thật.
+        if (!response.ok) refreshBlocked = true;
+        return response.ok;
+      })
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null;
+      }));
+
+  return inflight;
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { body, params, headers, ...rest } = options;
 
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
-  const response = await fetch(buildUrl(path, params), {
-    ...rest,
-    // Bắt buộc để cookie HttpOnly (cst_at / adm_at) được gửi kèm.
-    credentials: 'include',
-    headers: {
-      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-      ...headers,
-    },
-    body: body === undefined ? undefined : isFormData ? (body as FormData) : JSON.stringify(body),
-  });
+  const send = () =>
+    fetch(buildUrl(path, params), {
+      ...rest,
+      // Bắt buộc để cookie HttpOnly (cst_at / adm_at) được gửi kèm.
+      credentials: 'include',
+      headers: {
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...headers,
+      },
+      body: body === undefined ? undefined : isFormData ? (body as FormData) : JSON.stringify(body),
+    });
+
+  let response = await send();
+
+  // Gọi lại đúng **một** lần sau khi làm mới. `FormData` đã bị đọc hết ở lượt đầu thì không gửi
+  // lại được, nên lượt tải file hỏng vẫn báo 401 như cũ — người dùng chọn lại file, còn hơn gửi
+  // đi một body rỗng và tưởng đã tải lên xong.
+  if (response.status === 401 && !isFormData) {
+    const endpoint = refreshEndpointFor(path);
+    if (endpoint && (await tryRefresh(endpoint))) {
+      response = await send();
+    }
+  }
 
   if (response.status === 204) return undefined as T;
 

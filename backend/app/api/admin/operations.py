@@ -77,7 +77,9 @@ from app.services import (
     rbac,
     realtime,
     signal_service,
+    storage_service,
     strategy_run_service,
+    strategy_service,
     telegram_service,
 )
 from app.services.audit_service import AuditAction, log_action
@@ -646,6 +648,73 @@ def set_strategy_status(strategy_id: int, status: str, staff: CanManageStrategy,
     strategy.status = status
     db.commit()
     return Message(message="Đã cập nhật trạng thái chiến lược")
+
+
+@router.get("/strategies/{strategy_id}/delete-preview", response_model=dict)
+def preview_strategy_delete(strategy_id: int, staff: CanManageStrategy, db: DbSession) -> dict:
+    """Những gì sẽ mất nếu xoá chiến lược này — để hộp xác nhận nói ra cái giá trước khi bấm.
+
+    "Xoá chiến lược này?" và "Xoá chiến lược này cùng 412 tín hiệu và 8 khách hàng đang nhận cảnh
+    báo?" là hai câu hỏi hoàn toàn khác nhau, và chỉ câu thứ hai mới trả lời được.
+    """
+    _system_strategy(db, strategy_id)
+    return strategy_service.counts_for(db, strategy_id)
+
+
+@router.delete("/strategies/{strategy_id}", response_model=Message)
+def delete_strategy(strategy_id: int, reason: str, staff: CanManageStrategy, request: Request,
+                    db: DbSession) -> Message:
+    """Xoá hẳn một chiến lược của hệ thống cùng toàn bộ dữ liệu treo vào nó.
+
+    **Xoá thật, không phải lưu trữ.** Trạng thái ARCHIVED đã có sẵn và là lựa chọn đúng trong đa
+    số trường hợp — giữ lại lịch sử hiệu suất, chỉ ẩn khỏi site khách hàng. Nút xoá này dành cho
+    thứ ARCHIVED không giải quyết được: chiến lược tạo nhầm, trùng lặp, hoặc dựng để thử.
+
+    Ba việc phải làm trước khi xoá, theo đúng thứ tự:
+
+    1. **Báo cho khách hàng đang đăng ký.** Sau khi xoá thì không còn bảng nào cho biết họ là ai.
+    2. **Ghi nhật ký kèm lý do và số bản ghi sẽ mất.** BR-840 giữ tín hiệu bất biến để thống kê
+       hiệu suất có giá trị làm bằng chứng; xoá cả chiến lược làm bốc hơi phần lịch sử đó, nên
+       thứ tối thiểu phải để lại là dấu vết ai xoá, lúc nào, vì sao, và mất bao nhiêu.
+    3. **Dọn dữ liệu phụ thuộc** — `strategy_service.purge`.
+
+    Chiến lược cá nhân của khách hàng không xoá được từ đây (BR-533): đó là tài sản của họ, và
+    họ có nút xoá của riêng mình bên site khách hàng.
+    """
+    strategy = _system_strategy(db, strategy_id)
+    if not reason or len(reason.strip()) < 3:
+        raise ValidationError("Nhập lý do xoá — lý do được ghi vào nhật ký", {"field": "reason"})
+
+    notified = telegram_service.notify_subscribers_strategy_removed(db, strategy)
+    snapshot = {
+        "code": strategy.code,
+        "name": strategy.name,
+        "status": strategy.status,
+        "kind": strategy.kind,
+        **strategy_service.counts_for(db, strategy_id),
+        "notified_customers": notified,
+    }
+    log_action(
+        db, action=AuditAction.STRATEGY_DELETE, actor=staff, target_type="strategy",
+        target_id=strategy_id, old_value=snapshot, reason=reason.strip(),
+        ip=client_ip(request), user_agent=user_agent(request),
+    )
+
+    result = strategy_service.purge(db, strategy)
+    db.commit()
+
+    # Sau commit: rollback sau khi đã xoá file là mất file mà bản ghi vẫn còn.
+    for stored_name in result.stored_names:
+        storage_service.delete_file(stored_name)
+
+    parts = [f"Đã xoá chiến lược “{snapshot['name']}”"]
+    if result.signals:
+        parts.append(f"{result.signals} tín hiệu")
+    if result.analyses:
+        parts.append(f"{result.analyses} bản phân tích")
+    if notified:
+        parts.append(f"đã báo {notified} khách hàng đang đăng ký")
+    return Message(message=", ".join(parts) + ".")
 
 
 @router.post("/signals", response_model=IdResponse, status_code=201)

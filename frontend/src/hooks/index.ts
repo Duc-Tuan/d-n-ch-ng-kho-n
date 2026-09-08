@@ -9,6 +9,7 @@ export { useFormErrors } from './useFormErrors';
 export { useList } from './useList';
 export { SessionProvider, useSession, useAccessBanner } from './useSession';
 export { StaffSessionProvider, useStaffSession } from './useStaffSession';
+export { useTokenRefresh } from './useTokenRefresh';
 export { ToastProvider, useToast } from './useToast';
 export { useRealtime, useNotificationSound, type RealtimeEvent } from './useRealtime';
 export { useContentRealtime } from './useContentRealtime';

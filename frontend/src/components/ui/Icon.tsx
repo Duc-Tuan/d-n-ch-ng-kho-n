@@ -68,7 +68,29 @@ export type IconName =
   | 'trending-up'
   | 'trending-down'
   | 'sparkles'
-  | 'spinner';
+  | 'spinner'
+  // Công cụ vẽ trên biểu đồ — xem `components/domain/chart/DrawingToolbar`.
+  | 'cursor'
+  | 'crosshair'
+  | 'line-diagonal'
+  | 'ray'
+  | 'line-extended'
+  | 'line-h'
+  | 'line-h-ray'
+  | 'line-v'
+  | 'channel'
+  | 'square'
+  | 'circle'
+  | 'triangle'
+  | 'fibonacci'
+  | 'position-long'
+  | 'position-short'
+  | 'text'
+  | 'note'
+  | 'arrow-up-right'
+  | 'brush'
+  | 'ruler'
+  | 'magnet';
 
 type IconProps = SVGProps<SVGSVGElement> & {
   name: IconName;
@@ -223,6 +245,101 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   spinner: <path d="M12 3a9 9 0 1 0 9 9" />,
+
+  /* ── Công cụ vẽ ────────────────────────────────────────────────────────
+     Vẽ chính hình dạng của công cụ (đường, tia, kênh, mức Fibonacci) chứ không mượn icon nghĩa
+     gần đúng: người dùng nhận ra công cụ qua hình, và thanh này có tới bảy nhóm đứng cạnh nhau. */
+  cursor: <path d="M5 3l13.5 7.5-5.5 1.5-1.5 5.5z" />,
+  crosshair: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+    </>
+  ),
+  'line-diagonal': (
+    <>
+      <path d="M6 18 18 6" />
+      <circle cx="5" cy="19" r="1.8" />
+      <circle cx="19" cy="5" r="1.8" />
+    </>
+  ),
+  ray: (
+    <>
+      <path d="M6 18 19 5" />
+      <circle cx="5" cy="19" r="1.8" />
+      <path d="M13 5h6v6" />
+    </>
+  ),
+  'line-extended': (
+    <>
+      <path d="M3 21 21 3" />
+      <circle cx="9" cy="15" r="1.6" />
+      <circle cx="15" cy="9" r="1.6" />
+    </>
+  ),
+  'line-h': (
+    <>
+      <path d="M3 12h18" />
+      <circle cx="9" cy="12" r="1.8" />
+    </>
+  ),
+  'line-h-ray': (
+    <>
+      <path d="M6 12h13" />
+      <circle cx="5" cy="12" r="1.8" />
+      <path d="m16 8 4 4-4 4" />
+    </>
+  ),
+  'line-v': (
+    <>
+      <path d="M12 3v18" />
+      <circle cx="12" cy="9" r="1.8" />
+    </>
+  ),
+  channel: <path d="M3 14 13 4M11 20 21 10" />,
+  square: <rect x="3.5" y="5.5" width="17" height="13" rx="1.5" />,
+  circle: <circle cx="12" cy="12" r="8.5" />,
+  triangle: <path d="M12 4 21 19H3z" />,
+  fibonacci: <path d="M3 5h18M3 10h18M3 15h18M3 20h18" />,
+  'position-long': (
+    <>
+      <path d="M3 15h18M3 20h18" />
+      <path d="M12 3v9M9 6l3-3 3 3" />
+    </>
+  ),
+  'position-short': (
+    <>
+      <path d="M3 4h18M3 9h18" />
+      <path d="M12 21v-9M9 18l3 3 3-3" />
+    </>
+  ),
+  text: <path d="M5 6.5V4h14v2.5M12 4v16M9 20h6" />,
+  note: (
+    <>
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5V14l-6 6H5.5A1.5 1.5 0 0 1 4 18.5z" />
+      <path d="M20 14h-4.5a1.5 1.5 0 0 0-1.5 1.5V20" />
+      <path d="M8 9h8M8 12.5h5" />
+    </>
+  ),
+  'arrow-up-right': <path d="M7 17 17 7M9 7h8v8" />,
+  brush: (
+    <>
+      <path d="M20.5 3.5a2.1 2.1 0 0 0-3 0L9 12l3 3 8.5-8.5a2.1 2.1 0 0 0 0-3z" />
+      <path d="M9 12c-2 0-3 1.5-3 3.5S5 19.5 3 20.5c2 1 6 .5 7.5-1.5 1-1.4 1-3 .5-4" />
+    </>
+  ),
+  ruler: (
+    <>
+      <path d="M4 14 14 4l6 6-10 10z" />
+      <path d="m6 12 2 2M9 9l2 2M12 6l2 2" />
+    </>
+  ),
+  magnet: (
+    <>
+      <path d="M6 4H3v8a9 9 0 0 0 18 0V4h-3v8a6 6 0 0 1-12 0z" />
+      <path d="M3 8.5h3M18 8.5h3" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 20, className, ...props }: IconProps) {

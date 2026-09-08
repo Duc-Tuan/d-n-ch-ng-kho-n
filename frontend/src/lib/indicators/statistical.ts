@@ -89,6 +89,57 @@ const zScore: IndicatorDef = {
   compute: (candles, p) => ({ zscore: zScoreSeries(source(candles, src(p)), num(p, 'length')) }),
 };
 
+/* ── Volume Z-Score ─────────────────────────────────────────────────────── */
+
+/**
+ * Khối lượng phiên này lệch bao nhiêu độ lệch chuẩn so với `length` phiên gần nhất.
+ *
+ * Đọc khối lượng thô thì mỗi mã một thang: 200 nghìn cổ phiếu là bình thường với mã này nhưng là
+ * đột biến với mã kia, và ngay trong một mã thì mức "bình thường" cũng trôi theo năm tháng. Quy
+ * về độ lệch chuẩn xoá cả hai khác biệt đó — mọi mã đọc trên cùng một thang.
+ *
+ * Phân bố **lệch phải** rõ rệt và đó là đúng bản chất, không phải lỗi: khối lượng không âm nên
+ * phía dưới bị chặn quanh −1, còn phía trên thì một phiên tin tức đẩy lên +4, +5 dễ dàng. Vì vậy
+ * ngưỡng đột biến mặc định đặt ở 4.5 chứ không phải 2 như z-score của giá.
+ */
+const volumeZScore: IndicatorDef = {
+  id: 'volume_zscore',
+  name: 'Volume Z-Score',
+  short: 'Vol Z',
+  category: 'volume',
+  placement: 'pane',
+  precision: 2,
+  labelParams: ['length', 'threshold', 'signal'],
+  params: [
+    { key: 'length', label: 'Chu kỳ so sánh', type: 'number', default: 60, min: 5, max: 500 },
+    { key: 'threshold', label: 'Ngưỡng đột biến (σ)', type: 'number', default: 4.5, min: 0.5, max: 20, step: 0.5 },
+    { key: 'signal', label: 'Chu kỳ đường trung bình', type: 'number', default: 12, min: 1, max: 200 },
+  ],
+  plots: [
+    { key: 'zscore', label: 'Volume Z-Score', type: 'line', color: C.gray, lineWidth: 2 },
+    // Ngưỡng đi theo tham số nên phải là **plot**, không phải `level`: `levels` khai báo tĩnh
+    // trong định nghĩa, kéo ngưỡng từ 4.5 xuống 3 thì đường kẻ vẫn nằm nguyên ở 4.5.
+    { key: 'threshold', label: 'Ngưỡng đột biến', type: 'line', color: C.red, lineWidth: 1, lineStyle: 'dashed' },
+    // Ẩn sẵn: đường chính đã đủ đọc, đường trung bình chỉ cần khi muốn so nền khối lượng của
+    // từng giai đoạn với nhau.
+    { key: 'signal', label: 'Trung bình', type: 'line', color: C.blue, lineWidth: 1, hidden: true },
+  ],
+  levels: [{ value: 0, color: C.gray, lineStyle: 'dotted', label: 'Trung bình' }],
+  compute: (candles, p) => {
+    const volume: Series = candles.map((candle) => candle.volume);
+    const values = zScoreSeries(volume, num(p, 'length'));
+    const threshold = num(p, 'threshold');
+
+    return {
+      zscore: values,
+      signal: sma(values, num(p, 'signal')),
+      // Chỉ kẻ ngưỡng ở những nến đã tính được z-score, để đường kẻ không chạy dài qua đoạn đầu
+      // trống rỗng và làm trục giá của cửa sổ giãn ra vô cớ.
+      threshold: values.map((value) => (value === null ? null : threshold)),
+    };
+  },
+};
+
 /* ── ADR — Average Daily Range ──────────────────────────────────────────── */
 
 /**
@@ -212,4 +263,4 @@ const volumeProfile: IndicatorDef = {
   computeShapes: (candles, p) => volumeProfileShapes(candles, num(p, 'bins'), num(p, 'valueArea')),
 };
 
-export const STATISTICAL_INDICATORS: IndicatorDef[] = [slope, zScore, adr, volumeProfile];
+export const STATISTICAL_INDICATORS: IndicatorDef[] = [slope, zScore, volumeZScore, adr, volumeProfile];

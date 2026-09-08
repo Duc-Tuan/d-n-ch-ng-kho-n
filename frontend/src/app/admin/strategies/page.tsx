@@ -72,6 +72,7 @@ export default function AdminStrategiesPage() {
 
   const [signalFor, setSignalFor] = useState<AdminStrategy | null>(null);
   const [symbolsFor, setSymbolsFor] = useState<AdminStrategy | null>(null);
+  const [deleting, setDeleting] = useState<AdminStrategy | null>(null);
   // Mặc định chỉ xem chiến lược của hệ thống: đây là thứ nhân viên thật sự quản lý, và cũng là
   // thứ duy nhất lên được site khách hàng.
   const [ownerType, setOwnerType] = useState('SYSTEM');
@@ -173,21 +174,21 @@ export default function AdminStrategiesPage() {
         />
       </div>
 
-      {ownerType === 'USER' && (
+      {/* {ownerType === 'USER' && (
         <Alert tone="info" title="Chiến lược cá nhân của khách hàng">
           Khách hàng tự tạo và tự quản lý. Chúng <strong>không bao giờ hiển thị</strong> ở danh
           sách chiến lược công khai — chỉ chính chủ và người được chia sẻ mới xem được. Nhân viên
           chỉ xem để hỗ trợ, không nhập tín hiệu hay sửa phạm vi mã được.
         </Alert>
-      )}
+      )} */}
 
-      {ownerType !== 'USER' && hiddenCount > 0 && (
+      {/* {ownerType !== 'USER' && hiddenCount > 0 && (
         <Alert tone="warning" title={`${hiddenCount} chiến lược chưa hiển thị với khách hàng`}>
           Chiến lược chỉ lên site khách hàng khi ở trạng thái <strong>Đang hoạt động</strong> và
           được đánh dấu <strong>công khai</strong>. Xem thẻ “Khách hàng không thấy” bên dưới để
           biết chiến lược nào đang thiếu điều kiện.
         </Alert>
-      )}
+      )} */}
 
       {isLoading ? (
         <Spinner label="Đang tải…" />
@@ -290,6 +291,16 @@ export default function AdminStrategiesPage() {
                         >
                           {strategy.status === 'ACTIVE' ? 'Lưu trữ' : 'Kích hoạt'}
                         </Button>
+                        {/* Xoá đứng cuối và tách khỏi nhóm sửa: nó không hoàn tác được, còn
+                            "Lưu trữ" ngay bên trái mới là thứ cần dùng trong đa số trường hợp. */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:bg-red-50"
+                          onClick={() => setDeleting(strategy)}
+                        >
+                          Xoá
+                        </Button>
                       </>
                     )}
                   </div>
@@ -369,7 +380,103 @@ export default function AdminStrategiesPage() {
           }}
         />
       )}
+
+      {deleting && (
+        <DeleteStrategyDialog
+          strategy={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={(message) => {
+            toast.success(message);
+            setDeleting(null);
+            refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Hộp xác nhận xoá — **đếm trước rồi mới hỏi**.
+ *
+ * "Xoá chiến lược này?" là câu hỏi không trả lời được: người bấm không biết đằng sau nó có bao
+ * nhiêu tín hiệu và bao nhiêu khách hàng đang chờ. Gọi `delete-preview` để hỏi kèm con số, và
+ * bắt nhập lý do vì lý do đó đi thẳng vào nhật ký kiểm toán — sau khi xoá thì nhật ký là thứ
+ * duy nhất còn lại.
+ */
+function DeleteStrategyDialog({
+  strategy,
+  onClose,
+  onDeleted,
+}: {
+  strategy: AdminStrategy;
+  onClose: () => void;
+  onDeleted: (message: string) => void;
+}) {
+  const { data: preview, isLoading } = useApiQuery<{
+    signals: number;
+    analyses: number;
+    alerts: number;
+    questions: number;
+    shares: number;
+    documents: number;
+  }>(`${ADMIN}/strategies/${strategy.id}/delete-preview`);
+
+  const remove = useApiMutation<Message, string>((reason) =>
+    api.del<Message>(`${ADMIN}/strategies/${strategy.id}`, { reason }),
+  );
+
+  const losing = [
+    [preview?.signals, 'tín hiệu'],
+    [preview?.analyses, 'bản phân tích'],
+    [preview?.questions, 'câu hỏi của khách hàng'],
+    [preview?.documents, 'tài liệu đính kèm'],
+  ].filter(([count]) => Number(count) > 0) as [number, string][];
+
+  return (
+    <ConfirmDialog
+      open
+      onClose={onClose}
+      title={`Xoá chiến lược “${strategy.name}”`}
+      danger
+      confirmLabel="Xoá vĩnh viễn"
+      loading={remove.loading || isLoading}
+      requireReason
+      reasonLabel="Lý do xoá"
+      reasonHint="Lý do và số bản ghi bị mất được ghi vào nhật ký hệ thống."
+      message={
+        <div className="space-y-2">
+          <p>
+            Mã <strong>{strategy.code}</strong>. Thao tác này{' '}
+            <strong>không thể hoàn tác</strong>.
+          </p>
+          {isLoading ? (
+            <p className="text-ink-500">Đang đếm dữ liệu liên quan…</p>
+          ) : losing.length > 0 ? (
+            <p className="text-red-600">
+              Sẽ xoá theo: {losing.map(([count, label]) => `${count} ${label}`).join(', ')}.
+            </p>
+          ) : (
+            <p className="text-ink-500">Chiến lược này chưa có dữ liệu nào đi kèm.</p>
+          )}
+          {Number(preview?.alerts) > 0 && (
+            <p className="text-amber-700">
+              {preview?.alerts} khách hàng đang đăng ký nhận tín hiệu sẽ được thông báo và mất
+              đăng ký này.
+            </p>
+          )}
+          {/* Lối thoát cho trường hợp người dùng thật sự cần là "ẩn đi", không phải "xoá". */}
+          <p className="text-ink-500">
+            Chỉ muốn ẩn khỏi site khách hàng mà vẫn giữ lịch sử hiệu suất? Dùng nút{' '}
+            <strong>Lưu trữ</strong> thay cho xoá.
+          </p>
+        </div>
+      }
+      onConfirm={async (reason) => {
+        const result = await remove.mutate(reason);
+        if (result) onDeleted(result.message);
+      }}
+    />
   );
 }
 

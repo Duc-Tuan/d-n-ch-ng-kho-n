@@ -29,8 +29,9 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { SymbolCombobox } from '@/components/domain/SymbolCombobox';
 import { Button, Icon, IconButton } from '@/components/ui';
 import { useIsMobile } from '@/hooks';
 import { CUSTOMER, api } from '@/lib/api';
@@ -47,11 +48,15 @@ import { toIndicatorCandles } from '@/lib/indicators/snapshot';
 import type { Candle, OhlcvResponse } from '@/types';
 
 import { LINE_STYLE_MAP, baseChartOptions, down, up } from './chart/chartTheme';
+import { DrawingCanvas } from './chart/DrawingCanvas';
+import { DrawingStyleBar } from './chart/DrawingStyleBar';
+import { DrawingToolbar } from './chart/DrawingToolbar';
 import { IndicatorPane, PaneButton } from './chart/IndicatorPane';
 import { IndicatorSettingsModal } from './chart/IndicatorSettingsModal';
 import { IndicatorsModal } from './chart/IndicatorsModal';
 import { ShapesLayer } from './chart/ShapesLayer';
 import { useChartSync } from './chart/useChartSync';
+import { useDrawings } from './chart/useDrawings';
 import { useElementSize } from './chart/useElementSize';
 import type { IndicatorStore } from './chart/useIndicators';
 
@@ -75,6 +80,9 @@ export function PriceChart({
   indicators,
   height = 420,
   attribution,
+  sidePanel,
+  onExpandedChange,
+  onSymbolChange,
 }: {
   /** Truyền `symbol` để bật tải thêm lịch sử khi cuộn. Bỏ trống thì chỉ hiển thị tĩnh. */
   symbol?: string;
@@ -88,6 +96,28 @@ export function PriceChart({
   indicators: IndicatorStore;
   height?: number;
   attribution?: string;
+  /**
+   * Nội dung cho cột bên phải khi biểu đồ **phóng to kín màn hình** (bảng phân tích, thẻ chỉ số…).
+   *
+   * Lúc thu nhỏ thì không dùng tới: những khối này đã nằm sẵn dưới biểu đồ trong trang, dựng thêm
+   * một bản thứ hai chỉ tạo ra hai chỗ hiển thị cùng một thứ. Lớp phủ toàn màn hình mới là lúc
+   * chúng bị che mất, và cũng là lúc màn hình đủ rộng để đặt chúng sang bên.
+   */
+  sidePanel?: ReactNode;
+  /**
+   * Báo cho màn cha biết biểu đồ vừa bung ra hay vừa thu lại.
+   *
+   * Cần thiết vì phần nội dung ở `sidePanel` **chuyển chỗ** chứ không nhân đôi: màn cha phải gỡ
+   * bản nằm trong trang đi, nếu không sẽ có hai bảng phân tích cùng sống và cái bị lớp phủ che
+   * chỉ tốn lượt gọi máy chủ.
+   */
+  onExpandedChange?: (expanded: boolean) => void;
+  /**
+   * Đổi mã ngay trên biểu đồ. Chỉ dùng khi phóng to kín màn hình — lúc đó lớp phủ che mất bảng
+   * giá, và bảng giá là chỗ duy nhất đổi mã được; không có nút này thì muốn xem mã khác phải
+   * thoát ra, bấm, rồi phóng to lại.
+   */
+  onSymbolChange?: (symbol: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -114,6 +144,9 @@ export function PriceChart({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
 
+  /** Hình vẽ tay: đường xu hướng, Fibonacci, vùng giá… Gắn theo mã, lưu trong máy người dùng. */
+  const drawings = useDrawings(symbol);
+
   // Dùng ref trong callback của biểu đồ để không phải gắn lại sự kiện mỗi lần dữ liệu đổi.
   const stateRef = useRef({ candles, loadingMore, exhausted, symbol });
   stateRef.current = { candles, loadingMore, exhausted, symbol };
@@ -129,16 +162,23 @@ export function PriceChart({
        trọn cả bề ngang lẫn bề dọc khung nhìn — thoát khỏi cột phải chật của bảng giá — nhưng
        trình duyệt vẫn là trình duyệt, thanh tab và thanh địa chỉ còn nguyên. */
 
-  // Esc để thu nhỏ — nhưng nhường cho modal đang mở, vì Esc của nó phải đóng modal trước.
+  // Esc để thu nhỏ — nhưng nhường cho modal đang mở (Esc của nó phải đóng modal trước) và cho
+  // công cụ vẽ: đang cầm công cụ hay đang chọn một hình thì Esc là "bỏ thao tác đó", thoát luôn
+  // cả màn hình lớn sẽ hất người dùng ra ngoài giữa chừng.
+  const drawingBusy = drawings.activeTool !== 'cursor' || drawings.selectedId !== null;
   useEffect(() => {
     if (!expanded) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !pickerOpen && !settingsId) setExpanded(false);
+      if (event.key === 'Escape' && !pickerOpen && !settingsId && !drawingBusy) setExpanded(false);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [expanded, pickerOpen, settingsId]);
+  }, [expanded, pickerOpen, settingsId, drawingBusy]);
+
+  useEffect(() => {
+    onExpandedChange?.(expanded);
+  }, [expanded, onExpandedChange]);
 
   // Khoá cuộn nền: lớp phủ che kín rồi, để trang phía sau cuộn được chỉ gây trôi vị trí khi thoát.
   useEffect(() => {
@@ -221,6 +261,42 @@ export function PriceChart({
   /** Nến ở dạng chỉ báo cần: thời gian là giây unix, mọi giá trị đã ép số. */
   const series = useMemo<IndicatorCandle[]>(() => toIndicatorCandles(candles), [candles]);
 
+  /**
+   * Cách người dùng kéo và phóng biểu đồ. Tách thành một hằng vì lớp công cụ vẽ **tắt rồi bật
+   * lại** phần này mỗi lần vẽ; bật lại bằng `true` sẽ mở luôn cả kéo dọc bằng ngón tay — thứ
+   * BR-846 đã tắt trên điện thoại.
+   */
+  const interaction = useMemo(
+    () => ({
+      // Liệt kê **đủ** các cờ chứ không chỉ cái muốn đổi: lớp vẽ tắt cả nhóm bằng
+      // `handleScroll: false`, và khi bật lại thư viện chỉ trộn đúng những khoá được nêu — thiếu
+      // `mouseWheel` hay `pressedMouseMove` ở đây là sau nét vẽ đầu tiên biểu đồ hết kéo được.
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        // BR-846 — trên điện thoại không cho kéo dọc, tránh tranh chấp với cuộn trang.
+        vertTouchDrag: !isMobile,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        axisDoubleClickReset: true,
+        mouseWheel: true,
+        pinch: true,
+      },
+    }),
+    [isMobile],
+  );
+
+  /**
+   * Số chữ số thập phân của nhãn giá trên hình vẽ. Bảng giá in giá nguyên (mã giá vài chục nghìn
+   * đồng), nhưng chứng chỉ quỹ và mã giá thấp cần phần lẻ mới phân biệt được các mức Fibonacci.
+   */
+  const digits = useMemo(() => {
+    const last = series.at(-1)?.close ?? 0;
+    return last >= 1000 ? 0 : last >= 100 ? 1 : 2;
+  }, [series]);
+
   const { bars, volumes } = useMemo(() => {
     const bars: CandlestickData<Time>[] = [];
     const volumes: HistogramData<Time>[] = [];
@@ -267,6 +343,7 @@ export function PriceChart({
     const lines: NonNullable<IndicatorShapes['lines']> = [];
     const markers: NonNullable<IndicatorShapes['markers']> = [];
     const labels: NonNullable<IndicatorShapes['labels']> = [];
+    const tables: NonNullable<IndicatorShapes['tables']> = [];
 
     for (const { instance, def } of activeOverlays) {
       const out = def.computeShapes?.(series, instance.params);
@@ -275,11 +352,12 @@ export function PriceChart({
       if (out.lines) lines.push(...out.lines);
       if (out.markers) markers.push(...out.markers);
       if (out.labels) labels.push(...out.labels);
+      if (out.tables) tables.push(...out.tables);
     }
 
     // `setMarkers` đòi thứ tự thời gian tăng dần, nếu không nó bỏ qua phần lệch.
     markers.sort((a, b) => a.time - b.time);
-    return { boxes, lines, markers, labels };
+    return { boxes, lines, markers, labels, tables };
   }, [activeOverlays, series]);
 
   /** Trục thời gian luôn nằm ở biểu đồ **cuối cùng còn hiện** — vẽ ở mọi cái là lặp ba lần. */
@@ -293,9 +371,7 @@ export function PriceChart({
     const chart = createChart(containerRef.current, {
       ...baseChartOptions(),
       height,
-      // BR-846 — trên điện thoại không cho kéo dọc trong biểu đồ, tránh tranh chấp với cuộn trang.
-      handleScroll: { vertTouchDrag: !isMobile },
-      handleScale: { pinch: true },
+      ...interaction,
     });
 
     const price = chart.addCandlestickSeries({
@@ -334,7 +410,7 @@ export function PriceChart({
       volumeRef.current = null;
       overlaySeriesRef.current.clear();
     };
-  }, [height, isMobile, loadOlder, sync]);
+  }, [height, interaction, loadOlder, sync]);
 
   // Bề rộng theo khung chứa chứ không theo cửa sổ trình duyệt: khung còn co giãn khi mở/đóng
   // một cửa sổ chỉ báo hay khi cột bảng giá bên trái đổi kích thước.
@@ -464,9 +540,15 @@ export function PriceChart({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1">
-          {/* Lớp phủ che mất phần đầu thẻ ghi mã đang xem — nhắc lại ở đây. */}
+          {/* Lớp phủ che mất phần đầu thẻ ghi mã đang xem — nhắc lại ở đây, và cho đổi mã luôn. */}
           {expanded && symbol && (
-            <span className="mr-2 text-base font-semibold text-ink-900">{symbol}</span>
+            onSymbolChange ? (
+              <div className="mr-2 w-40 sm:w-52">
+                <SymbolCombobox value={symbol} onChange={onSymbolChange} label="" />
+              </div>
+            ) : (
+              <span className="mr-2 text-base font-semibold text-ink-900">{symbol}</span>
+            )
           )}
 
           {RANGES.map((item) => (
@@ -524,39 +606,124 @@ export function PriceChart({
         </span>
       </div>
 
-      <div
-        className={cn(
-          'overflow-hidden rounded-lg border border-ink-200',
-          expanded && 'flex min-h-0 flex-1 flex-col',
-        )}
-      >
+      {/* Phóng to kín màn hình: biểu đồ và cột phân tích nằm cạnh nhau từ `lg` trở lên. Màn hẹp
+          hơn thì xếp dọc — nhét cả hai vào bề ngang điện thoại chỉ làm cả hai đều chật. */}
+      <div className={cn('flex min-h-0 flex-col gap-3', expanded && 'flex-1 lg:flex-row')}>
         <div
-          ref={hostRef}
-          className={cn('relative w-full', expanded && 'min-h-0 flex-1')}
-          style={expanded ? undefined : { height }}
+          className={cn(
+            'flex flex-col overflow-hidden rounded-lg border border-ink-200 md:flex-row',
+            expanded && 'min-h-0 min-w-0 flex-1',
+          )}
         >
-          <div ref={containerRef} className="absolute inset-0" />
+          {/* Thanh công cụ vẽ: dọc bên trái từ `md`, dải ngang dưới biểu đồ ở màn hẹp.
+              Không có mã thì không có chỗ để lưu hình — đưa ra một thanh công cụ vẽ xong mất
+              trắng còn tệ hơn là không có. */}
+          {symbol && <DrawingToolbar store={drawings} />}
 
-          {/* Nhãn các chỉ báo vẽ đè: tên, và nút chỉnh ngay tại chỗ đang nhìn thấy đường đó. */}
-          {indicators.overlays.length > 0 && (
-            <div className="pointer-events-none absolute left-2 top-1 z-10 flex flex-col gap-0.5">
-              {indicators.overlays.map((instance) => (
-                <span
-                  key={instance.instanceId}
-                  className="group pointer-events-auto flex w-fit items-center gap-1 rounded bg-surface/85 px-1 text-xs"
+          <div className={cn('flex min-w-0 flex-1 flex-col', expanded && 'min-h-0')}>
+            {/* `flex-1` + `minHeight` chứ không phải chiều cao cứng: thanh công cụ vẽ bên trái có
+                thể cao hơn `height`, và khi đó khung viền giãn ra theo nó. Chiều cao cứng để lại
+                một khoảng trống dưới biểu đồ, trông như biểu đồ lơ lửng giữa khung. */}
+            <div
+              ref={hostRef}
+              className={cn('relative w-full flex-1', expanded && 'min-h-0')}
+              style={expanded ? undefined : { minHeight: height }}
+            >
+              <div ref={containerRef} className="absolute inset-0" />
+
+              {/* Nhãn các chỉ báo vẽ đè: tên, và nút chỉnh ngay tại chỗ đang nhìn thấy đường đó. */}
+              {indicators.overlays.length > 0 && (
+                <div
+                  data-chart-ui
+                  className="pointer-events-none absolute left-2 top-1 z-10 flex flex-col gap-0.5"
                 >
-                  <span className={cn('font-medium', instance.visible ? 'text-ink-700' : 'text-ink-400 line-through')}>
-                    {instanceLabel(instance)}
-                  </span>
-                  <span className="flex items-center gap-0.5 opacity-50 transition-opacity group-hover:opacity-100">
+                  {indicators.overlays.map((instance) => (
+                    <span
+                      key={instance.instanceId}
+                      className="group pointer-events-auto flex w-fit items-center gap-1 rounded bg-surface/85 px-1 text-xs"
+                    >
+                      <span className={cn('font-medium', instance.visible ? 'text-ink-700' : 'text-ink-400 line-through')}>
+                        {instanceLabel(instance)}
+                      </span>
+                      <span className="flex items-center gap-0.5 opacity-50 transition-opacity group-hover:opacity-100">
+                        <PaneButton
+                          icon="settings"
+                          label="Cài đặt chỉ báo"
+                          onClick={() => setSettingsId(instance.instanceId)}
+                        />
+                        <PaneButton
+                          icon={instance.visible ? 'eye' : 'eye-off'}
+                          label={instance.visible ? 'Ẩn chỉ báo' : 'Hiện chỉ báo'}
+                          onClick={() => indicators.toggleVisible(instance.instanceId)}
+                        />
+                        <PaneButton
+                          icon="trash"
+                          label="Bỏ chỉ báo"
+                          danger
+                          onClick={() => indicators.remove(instance.instanceId)}
+                        />
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <ShapesLayer
+                chart={chartRef.current}
+                series={priceRef.current}
+                candles={series}
+                width={size.width}
+                height={size.height}
+                shapes={shapes}
+              />
+
+              {symbol && (
+                <>
+                  <DrawingCanvas
+                    hostRef={hostRef}
+                    chart={chartRef.current}
+                    series={priceRef.current}
+                    candles={series}
+                    width={size.width}
+                    height={size.height}
+                    digits={digits}
+                    store={drawings}
+                    restoreInteraction={interaction}
+                  />
+
+                  <DrawingStyleBar store={drawings} />
+                </>
+              )}
+            </div>
+
+            {indicators.panes.map((instance) =>
+              instance.visible ? (
+                <IndicatorPane
+                  key={instance.instanceId}
+                  instance={instance}
+                  candles={series}
+                  height={PANE_HEIGHT}
+                  showTimeScale={instance.instanceId === lastVisiblePane}
+                  onChartReady={sync.register}
+                  onChartDestroy={sync.unregister}
+                  onSeriesReady={sync.registerSeries}
+                  onOpenSettings={setSettingsId}
+                  onToggleVisible={indicators.toggleVisible}
+                  onRemove={indicators.remove}
+                />
+              ) : (
+                /* Ẩn thì gỡ hẳn biểu đồ cho đỡ tính toán, nhưng phải chừa một thanh mỏng — không
+                   thì không còn chỗ nào để bật hiện lại. */
+                <div
+                  key={instance.instanceId}
+                  className="flex h-8 items-center gap-1 border-t border-ink-200 bg-ink-50 px-2 text-xs"
+                >
+                  <span className="text-ink-400 line-through">{instanceLabel(instance)}</span>
+                  <span className="text-ink-400">— đang ẩn</span>
+                  <span className="ml-auto flex items-center gap-0.5">
                     <PaneButton
-                      icon="settings"
-                      label="Cài đặt chỉ báo"
-                      onClick={() => setSettingsId(instance.instanceId)}
-                    />
-                    <PaneButton
-                      icon={instance.visible ? 'eye' : 'eye-off'}
-                      label={instance.visible ? 'Ẩn chỉ báo' : 'Hiện chỉ báo'}
+                      icon="eye-off"
+                      label="Hiện lại chỉ báo"
                       onClick={() => indicators.toggleVisible(instance.instanceId)}
                     />
                     <PaneButton
@@ -566,60 +733,17 @@ export function PriceChart({
                       onClick={() => indicators.remove(instance.instanceId)}
                     />
                   </span>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <ShapesLayer
-            chart={chartRef.current}
-            series={priceRef.current}
-            candles={series}
-            width={size.width}
-            height={size.height}
-            shapes={shapes}
-          />
+                </div>
+              ),
+            )}
+          </div>
         </div>
 
-        {indicators.panes.map((instance) =>
-          instance.visible ? (
-            <IndicatorPane
-              key={instance.instanceId}
-              instance={instance}
-              candles={series}
-              height={PANE_HEIGHT}
-              showTimeScale={instance.instanceId === lastVisiblePane}
-              onChartReady={sync.register}
-              onChartDestroy={sync.unregister}
-              onSeriesReady={sync.registerSeries}
-              onOpenSettings={setSettingsId}
-              onToggleVisible={indicators.toggleVisible}
-              onRemove={indicators.remove}
-            />
-          ) : (
-            /* Ẩn thì gỡ hẳn biểu đồ cho đỡ tính toán, nhưng phải chừa một thanh mỏng — không
-               thì không còn chỗ nào để bật hiện lại. */
-            <div
-              key={instance.instanceId}
-              className="flex h-8 items-center gap-1 border-t border-ink-200 bg-ink-50 px-2 text-xs"
-            >
-              <span className="text-ink-400 line-through">{instanceLabel(instance)}</span>
-              <span className="text-ink-400">— đang ẩn</span>
-              <span className="ml-auto flex items-center gap-0.5">
-                <PaneButton
-                  icon="eye-off"
-                  label="Hiện lại chỉ báo"
-                  onClick={() => indicators.toggleVisible(instance.instanceId)}
-                />
-                <PaneButton
-                  icon="trash"
-                  label="Bỏ chỉ báo"
-                  danger
-                  onClick={() => indicators.remove(instance.instanceId)}
-                />
-              </span>
-            </div>
-          ),
+        {/* Cột phân tích chỉ dựng khi đang phóng to: lúc thu nhỏ nó đã nằm sẵn trong trang. */}
+        {expanded && sidePanel && (
+          <aside className="min-h-0 shrink-0 overflow-y-auto lg:w-[26rem] xl:w-[30rem]">
+            {sidePanel}
+          </aside>
         )}
       </div>
 
@@ -630,19 +754,7 @@ export function PriceChart({
           không đòi giữ đúng cái logo — nên nó chuyển xuống đây thành một dòng chữ. */}
       <p className="text-xs text-ink-500">
         {attribution ? `${attribution} · ` : ''}
-        Biểu đồ:{' '}
-        <a
-          href="https://www.tradingview.com/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline-offset-2 hover:text-ink-700 hover:underline"
-        >
-          TradingView Lightweight Charts™
-        </a>
       </p>
-      {symbol && !exhausted && (
-        <p className="text-xs text-ink-400">Kéo biểu đồ sang trái để xem thêm lịch sử.</p>
-      )}
 
       <IndicatorsModal
         open={pickerOpen}

@@ -6,7 +6,7 @@ import { useState } from 'react';
 
 import { Button, Icon, Input, PasswordInput } from '@/components/ui';
 import { useAction, useFormErrors, useStaffSession } from '@/hooks';
-import { ADMIN, api } from '@/lib/api';
+import { ADMIN, api, resetAuthRefresh } from '@/lib/api';
 import * as v from '@/lib/validation';
 import type { StaffProfile } from '@/types';
 
@@ -54,6 +54,9 @@ export default function AdminLoginPage() {
 
     const result = await login.run({ username: username.trim(), password });
     if (!result) return;
+
+    // Xem chú thích cùng dòng này ở màn đăng nhập khách hàng.
+    resetAuthRefresh();
 
     await refresh();
     router.push('/admin');

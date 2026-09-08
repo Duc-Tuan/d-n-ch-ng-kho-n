@@ -49,6 +49,9 @@ class AuditAction:
 
     STRATEGY_CREATE = "strategy.create"
     STRATEGY_UPDATE = "strategy.update"
+    #: Xoá hẳn chiến lược. Giá trị cũ mang theo số tín hiệu/phân tích đã mất — sau khi xoá thì
+    #: không còn bảng nào đếm lại được, nên nhật ký là bản ghi duy nhất về quy mô thiệt hại.
+    STRATEGY_DELETE = "strategy.delete"
     SIGNAL_CREATE = "signal.create"
     SIGNAL_CANCEL = "signal.cancel"
 

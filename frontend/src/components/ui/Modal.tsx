@@ -114,7 +114,7 @@ export function Modal({
         </div>
 
         {/* Chỉ vùng nội dung được cuộn — tiêu đề và chân luôn nhìn thấy. */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">{children}</div>
+        <div className="min-h-[72vh] max-h-[72vh] flex-1 overflow-y-auto overscroll-contain px-5 py-4">{children}</div>
 
         {footer && (
           <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-line px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex-row sm:justify-end">

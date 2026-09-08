@@ -269,11 +269,11 @@ function DocumentStrategyEditor({ strategyId, name }: { strategyId: number; name
         description="AI đọc các tài liệu này rồi viết nhận định khi khách hàng bấm Phân tích"
       />
 
-      <Alert tone="info" title="Chiến lược theo tài liệu không có bộ điều kiện">
+      {/* <Alert tone="info" title="Chiến lược theo tài liệu không có bộ điều kiện">
         Loại này chạy bằng AI đọc tài liệu, không chạy điều kiện máy. Muốn dùng điều kiện vào/thoát
         lệnh thì <strong>tạo một chiến lược theo điều kiện</strong> — hai loại không đổi qua lại
         được vì mọi tín hiệu đã phát đều gắn với mã chiến lược cũ.
-      </Alert>
+      </Alert> */}
 
       <StrategyDocuments strategyId={strategyId} />
     </div>
@@ -352,7 +352,7 @@ function StrategyDocuments({ strategyId }: { strategyId: number }) {
             options={available.map((d) => ({ value: d.id, label: d.title }))}
             className="min-w-[16rem] flex-1"
           />
-          <Button size="sm" disabled={!picked} onClick={() => void attach()}>
+          <Button size="sm" disabled={!picked} onClick={() => void attach()} className="h-11">
             Gắn vào chiến lược
           </Button>
           <Link href="/admin/documents">

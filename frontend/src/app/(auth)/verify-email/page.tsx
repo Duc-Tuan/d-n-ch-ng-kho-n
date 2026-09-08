@@ -6,7 +6,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 
 import { Icon, Alert, Button, Card, Input, Spinner } from '@/components/ui';
 import { useApiMutation, useSession, useToast } from '@/hooks';
-import { CUSTOMER, api } from '@/lib/api';
+import { api, CUSTOMER, resetAuthRefresh } from '@/lib/api';
 import type { Message, SessionResponse } from '@/types';
 
 function VerifyEmailContent() {
@@ -38,6 +38,8 @@ function VerifyEmailContent() {
       const result = await verify.mutate({ token });
       if (result) {
         setStatus('success');
+        // Xác thực email cũng cấp phiên mới, y như một lần đăng nhập.
+        resetAuthRefresh();
         await refresh();
         // BR-100 — xác thực xong là đồng hồ 7 ngày bắt đầu chạy, đưa KH vào ngay.
         setTimeout(() => router.push('/'), 1600);

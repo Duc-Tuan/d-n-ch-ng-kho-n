@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { createMapper } from '@/lib/indicators/coords';
 import type { Candle } from '@/lib/indicators/math';
-import type { IndicatorShapes } from '@/lib/indicators/types';
+import type { IndicatorShapes, IndicatorTable } from '@/lib/indicators/types';
 
 import { chartColor } from './chartTheme';
 
@@ -151,6 +151,17 @@ export function ShapesLayer({
       });
     }
 
+    // Bảng số liệu vẽ **sau cùng và trong cùng vùng xén**: nó là thứ đọc được ở mọi khoảng nhìn,
+    // nên phải nằm trên mọi hộp và đường, nhưng vẫn không được tràn sang cột giá.
+    // Bật hai chỉ báo cùng có bảng thì chúng xếp chồng lên nhau ở cùng một góc — dồn cái sau
+    // xuống dưới cái trước thay vì để hai bảng đè nhau thành một mớ chữ không đọc được.
+    const cornerOffset = new Map<string, number>();
+    for (const table of shapesRef.current.tables ?? []) {
+      const corner = table.corner ?? 'bottom-right';
+      const offset = cornerOffset.get(corner) ?? 0;
+      cornerOffset.set(corner, offset + drawTable(ctx, table, paneWidth, h, offset) + 6);
+    }
+
     ctx.restore();
   }, [chart, series]);
 
@@ -254,4 +265,78 @@ function drawLabel(
   ctx.fillStyle = solid ? chartColor('primary-fg', '255 255 255') : color;
   rows.forEach((row, i) => ctx.fillText(row, x, firstY + i * lineHeight));
   ctx.restore();
+}
+
+const TABLE_FONT = 11;
+const TABLE_ROW_HEIGHT = 20;
+const TABLE_PAD = 8;
+const TABLE_MARGIN = 10;
+
+/**
+ * Bảng số liệu dán ở một góc khung.
+ *
+ * Bề rộng đo theo nội dung thật chứ không đặt cứng: giá cổ phiếu Việt Nam in ra "68.500" nhưng
+ * khối lượng thì "132.262M", hai cột đó chênh nhau rất nhiều tuỳ mã và tuỳ chỉ báo.
+ */
+function drawTable(
+  ctx: CanvasRenderingContext2D,
+  table: IndicatorTable,
+  paneWidth: number,
+  paneHeight: number,
+  /** Đẩy ra khỏi mép bao nhiêu pixel — chỗ cho những bảng đã vẽ trước ở cùng góc. */
+  stackOffset: number,
+): number {
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.textBaseline = 'middle';
+
+  ctx.font = `600 ${TABLE_FONT}px -apple-system, system-ui, sans-serif`;
+  const titleWidth = table.title ? ctx.measureText(table.title).width : 0;
+
+  ctx.font = `${TABLE_FONT}px -apple-system, system-ui, sans-serif`;
+  const labelWidth = Math.max(...table.rows.map((row) => ctx.measureText(row.label).width));
+  const valueWidth = Math.max(...table.rows.map((row) => ctx.measureText(row.value).width));
+
+  const gap = 16;
+  const width = Math.max(titleWidth, labelWidth + gap + valueWidth) + TABLE_PAD * 2;
+  const height =
+    (table.rows.length + (table.title ? 1 : 0)) * TABLE_ROW_HEIGHT + TABLE_PAD * 2 - 4;
+
+  const corner = table.corner ?? 'bottom-right';
+  const x = corner.endsWith('right') ? paneWidth - width - TABLE_MARGIN : TABLE_MARGIN;
+  const y = corner.startsWith('bottom')
+    ? paneHeight - height - TABLE_MARGIN - stackOffset
+    : TABLE_MARGIN + stackOffset;
+
+  roundedRect(ctx, x, y, width, height, 5);
+  ctx.fillStyle = chartColor('surface', '255 255 255', 0.94);
+  ctx.fill();
+  ctx.strokeStyle = chartColor('line', '217 217 222');
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  let cursor = y + TABLE_PAD + TABLE_ROW_HEIGHT / 2 - 2;
+
+  if (table.title) {
+    ctx.font = `600 ${TABLE_FONT}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = chartColor('ink-900', '24 24 32');
+    ctx.fillText(table.title, x + TABLE_PAD, cursor);
+    cursor += TABLE_ROW_HEIGHT;
+  }
+
+  ctx.font = `${TABLE_FONT}px -apple-system, system-ui, sans-serif`;
+  for (const row of table.rows) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = chartColor('ink-500', '113 113 127');
+    ctx.fillText(row.label, x + TABLE_PAD, cursor);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = row.color ?? chartColor('ink-900', '24 24 32');
+    ctx.fillText(row.value, x + width - TABLE_PAD, cursor);
+    cursor += TABLE_ROW_HEIGHT;
+  }
+
+  ctx.restore();
+  return height;
 }

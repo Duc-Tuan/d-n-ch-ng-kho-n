@@ -385,6 +385,50 @@ def deactivate_alerts_for_symbol(db: Session, strategy_id: int, symbol: str) -> 
     return len(alerts)
 
 
+def notify_subscribers_strategy_removed(db: Session, strategy: Strategy) -> int:
+    """Báo cho mọi khách đang nhận cảnh báo rằng chiến lược sắp bị xoá. Trả số người đã báo.
+
+    Gọi **trước** khi xoá, vì sau đó không còn bảng nào cho biết ai từng đăng ký. Không đặt lại
+    cờ `is_active` như `deactivate_alerts_for_symbol`: bản ghi đăng ký bị xoá hẳn cùng chiến
+    lược, đánh dấu một dòng sắp biến mất là việc thừa. Thứ không được phép thiếu là lời báo —
+    im lặng thì khách chỉ thấy tín hiệu ngừng về và tưởng hệ thống hỏng.
+    """
+    from app.core.constants import NotificationChannel, NotificationCode
+
+    from app.services import notification_service
+
+    alerts = db.scalars(
+        select(StrategyAlert).where(
+            StrategyAlert.strategy_id == strategy.id, StrategyAlert.is_active.is_(True)
+        )
+    ).all()
+
+    notified: set[int] = set()
+    for alert in alerts:
+        if alert.user_id in notified:
+            continue  # một khách đăng ký nhiều mã của cùng chiến lược chỉ nhận một lời báo
+        user = db.get(User, alert.user_id)
+        if not user:
+            continue
+        notified.add(alert.user_id)
+        notification_service.enqueue(
+            db,
+            user=user,
+            code=NotificationCode.ADMIN_BROADCAST,
+            channels=[NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+            reference_id=f"strategy_removed:{strategy.id}",
+            context={
+                "full_name": user.full_name,
+                "message": (
+                    f"Chiến lược '{strategy.name}' đã ngừng hoạt động và được gỡ khỏi hệ thống. "
+                    "Đăng ký nhận tín hiệu của bạn cho chiến lược này đã kết thúc."
+                ),
+            },
+        )
+    db.flush()
+    return len(notified)
+
+
 # ======================================================================
 # BR-866 — kiểm tra tại thời điểm gửi
 # ======================================================================

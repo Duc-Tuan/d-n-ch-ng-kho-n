@@ -5,8 +5,11 @@
  * hệ thống forex nội bộ: cùng một công thức, cùng tham số mặc định, nên một mã đọc trên hai
  * sản phẩm ra cùng con số. Sửa công thức thì phải sửa cả hai chỗ.
  */
+import { ICT_INDICATORS } from '@/lib/indicators/ict';
+import { LIQUIDITY_INDICATORS } from '@/lib/indicators/liquidity';
 import { OSCILLATOR_INDICATORS } from '@/lib/indicators/oscillators';
 import { OVERLAY_INDICATORS } from '@/lib/indicators/overlays';
+import { PROFILE_INDICATORS } from '@/lib/indicators/profiles';
 import { SMC_INDICATORS } from '@/lib/indicators/smc';
 import { STATISTICAL_INDICATORS } from '@/lib/indicators/statistical';
 import { defaultParams, type IndicatorDef, type IndicatorInstance } from '@/lib/indicators/types';
@@ -19,6 +22,9 @@ function uid(prefix = 'ind'): string {
 export const INDICATORS: IndicatorDef[] = [
   ...OVERLAY_INDICATORS,
   ...SMC_INDICATORS,
+  ...ICT_INDICATORS,
+  ...LIQUIDITY_INDICATORS,
+  ...PROFILE_INDICATORS,
   ...OSCILLATOR_INDICATORS,
   ...STATISTICAL_INDICATORS,
 ];

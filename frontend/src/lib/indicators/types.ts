@@ -105,6 +105,19 @@ export interface IndicatorLabel {
 }
 
 /**
+ * Bảng số liệu dán ở một góc khung ("S/R Dashboard", "Regression Matrix"…).
+ *
+ * Khác mọi thứ còn lại ở đây: nó **không neo vào (thời gian, giá)** mà neo vào góc khung, nên
+ * đứng yên khi kéo biểu đồ. Đó là điều kiện để nó dùng được — một bảng tổng kết trôi mất khỏi
+ * khung nhìn ngay lần kéo đầu tiên thì không ai đọc.
+ */
+export interface IndicatorTable {
+  title?: string;
+  rows: { label: string; value: string; color?: string }[];
+  corner?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+}
+
+/**
  * Đầu ra "phi chuỗi" của chỉ báo. Series thường (`compute`) đi vào
  * lightweight-charts; còn hộp/đường được vẽ tay lên canvas phủ, marker gắn vào
  * series giá qua `setMarkers`.
@@ -114,6 +127,7 @@ export interface IndicatorShapes {
   lines?: IndicatorLine[];
   markers?: IndicatorMarker[];
   labels?: IndicatorLabel[];
+  tables?: IndicatorTable[];
 }
 
 export interface IndicatorDef {

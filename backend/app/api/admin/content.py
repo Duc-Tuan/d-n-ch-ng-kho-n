@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from slugify import slugify
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 
 from app.core.config import settings
 from app.core.constants import ArticleStatus, CategoryType
@@ -23,6 +23,7 @@ from app.models.content import (
 )
 from app.models.media import MediaAsset
 from app.models.staff import Staff
+from app.models.strategy import StrategyKbDoc
 from app.schemas.common import IdResponse, Message
 from app.schemas.domain import (
     ArticleCreateRequest,
@@ -378,6 +379,11 @@ def list_documents(staff: CanViewDoc, db: DbSession, params: Pagination,
         # Tài liệu khách tự tải lên cho chiến lược cá nhân (BR-850) không thuộc kho chung và
         # không phải việc của nhân viên — cả danh sách lẫn thao tác sửa/xoá.
         .where(Document.owner_user_id.is_(None))
+        # Xoá tài liệu là **xoá mềm**: file bị gỡ khỏi đĩa, bản ghi ở lại để nhật ký tải xuống cũ
+        # không mất tham chiếu (xem `delete_document`). Thiếu bộ lọc này thì tài liệu đã xoá vẫn
+        # nằm nguyên trong danh sách — nhân viên bấm xoá, nhận thông báo thành công, rồi thấy nó
+        # còn đó và tưởng nút xoá hỏng. Tệ hơn: bấm tải thì file đã không còn trên đĩa.
+        .where(Document.is_active.is_(True))
         .order_by(Document.id.desc())
     )
     if category_id:
@@ -503,7 +509,17 @@ def delete_document(document_id: int, reason: str, staff: CanDeleteDoc, request:
     storage_service.delete_file(document.stored_name)
     # Giữ bản ghi ở trạng thái không hoạt động để log tải xuống cũ không mất tham chiếu.
     document.is_active = False
+
+    # Gỡ khỏi mọi chiến lược đang gắn nó. File đã không còn trên đĩa, nên để nguyên liên kết
+    # nghĩa là lượt phân tích sau đó đọc phải một tài liệu rỗng — và bộ tài liệu nền thiếu một
+    # cuốn thì kết quả vẫn trông hoàn chỉnh, không có gì báo cho ai biết.
+    detached = db.execute(
+        delete(StrategyKbDoc).where(StrategyKbDoc.document_id == document.id)
+    ).rowcount or 0
+
     db.commit()
+    if detached:
+        return Message(message=f"Đã xoá tài liệu và gỡ khỏi {detached} chiến lược đang dùng")
     return Message(message="Đã xoá tài liệu")
 
 

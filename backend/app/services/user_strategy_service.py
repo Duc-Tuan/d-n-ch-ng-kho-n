@@ -25,6 +25,7 @@ from app.models.content import Category, Document
 from app.models.market import Symbol
 from app.models.strategy import Strategy, StrategyKbDoc, StrategyShare, StrategySymbol
 from app.models.user import User
+from app.services import strategy_service
 
 #: Giới hạn số chiến lược cá nhân mỗi khách hàng — chặn lạm dụng, không phải rào bán hàng.
 MAX_STRATEGIES_PER_USER = 30
@@ -250,19 +251,20 @@ def update(
     return strategy
 
 
-def delete(db: Session, user: User, strategy_id: int) -> None:
+def delete(db: Session, user: User, strategy_id: int) -> strategy_service.PurgeResult:
+    """Xoá chiến lược cá nhân. Trả kết quả dọn dẹp — tầng API dùng để xoá file sau khi commit.
+
+    Việc dọn dữ liệu phụ thuộc nằm ở `strategy_service.purge` chứ không ở đây: `db.delete()`
+    trần thất bại ngay khi chiến lược đã từng phát ra một tín hiệu (khoá ngoại `signals` không
+    có CASCADE), và đó chính là lý do nút Xoá bên site khách hàng báo lỗi máy chủ.
+    """
     strategy, is_owner = get_for_user(db, user, strategy_id)
     if not is_owner:
         raise Forbidden("Chỉ người tạo mới xoá được chiến lược này", "NOT_STRATEGY_OWNER")
 
-    # Thu hồi mọi lượt chia sẻ trước, để người nhận không còn thấy chiến lược đã xoá.
-    db.execute(
-        StrategyShare.__table__.update()
-        .where(StrategyShare.strategy_id == strategy_id, StrategyShare.revoked_at.is_(None))
-        .values(revoked_at=utcnow())
-    )
-    db.delete(strategy)
-    db.flush()
+    # `purge` xoá hẳn các bản ghi chia sẻ, nên người từng được chia sẻ không còn thấy chiến
+    # lược này nữa — mạnh hơn việc chỉ đánh dấu thu hồi như trước.
+    return strategy_service.purge(db, strategy)
 
 
 # ======================================================================

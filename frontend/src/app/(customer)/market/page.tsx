@@ -49,6 +49,15 @@ export default function MarketPage() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState('HPG');
 
+  /**
+   * Biểu đồ đang phóng to kín màn hình hay không.
+   *
+   * Cần biết ở đây vì lúc đó phần phân tích **chuyển chỗ** — sang cột phải của lớp phủ. Dựng nó ở
+   * cả hai nơi cùng lúc thì có hai bảng phân tích cùng sống, mỗi bảng một trạng thái chờ kết quả
+   * riêng, và cái nằm dưới lớp phủ chỉ tốn lượt gọi chứ không ai nhìn thấy.
+   */
+  const [chartExpanded, setChartExpanded] = useState(false);
+
   // Bộ chỉ báo giữ ở đây chứ không trong biểu đồ: cả biểu đồ lẫn nút AI phân tích bên dưới đều
   // cần đúng một bộ này — biểu đồ để vẽ, nút phân tích để gửi cho mô hình đọc.
   const indicators = useIndicators();
@@ -74,7 +83,9 @@ export default function MarketPage() {
 
   return (
     <div className="space-y-5 pb-6">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+      {/* Cột trái vừa đủ cho bốn cột số của bảng giá; phần dôi ra dồn hết cho biểu đồ, vì đó mới
+          là thứ người dùng nhìn lâu và cần bề ngang để đọc nến. */}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,25rem)_minmax(0,1fr)]">
         {/* ---------- CỘT TRÁI: BẢNG GIÁ ----------
             Dính ở mép trên khi cuộn. Cột phải cao gấp nhiều lần (biểu đồ + phân tích + chỉ số),
             nên cuộn xuống đọc nhận định là mất luôn danh sách mã — mà đó chính là chỗ đổi sang
@@ -125,7 +136,7 @@ export default function MarketPage() {
                         +/-
                       </th>
                       <th className="hidden px-3 py-2.5 text-right text-label font-medium uppercase text-ink-500 sm:table-cell">
-                        Khối lượng
+                        K/L
                       </th>
                     </tr>
                   </thead>
@@ -145,9 +156,9 @@ export default function MarketPage() {
                       >
                         <td className="px-3 py-2.5">
                           <p className="font-semibold tracking-tight text-ink-900">{row.symbol}</p>
-                          <p className="max-w-[11rem] truncate text-xs text-ink-500">
+                          {/* <p className="max-w-[8rem] truncate text-xs text-ink-500">
                             {row.company_name ?? row.exchange}
-                          </p>
+                          </p> */}
                         </td>
                         <td
                           className={cn(
@@ -236,19 +247,36 @@ export default function MarketPage() {
                 indicators={indicators}
                 attribution={ohlcv.attribution}
                 height={420}
+                onExpandedChange={setChartExpanded}
+                onSymbolChange={setSelected}
+                // Phóng to kín màn hình thì lớp phủ che mất mọi thứ bên dưới. Đưa phần phân tích
+                // sang cột phải để vẫn đọc được nhận định cùng lúc với biểu đồ — chính lúc bung
+                // hết cỡ mới là lúc người dùng soi kỹ và cần đối chiếu.
+                sidePanel={
+                  <div className="space-y-3">
+                    <MarketAnalysisPanel
+                      symbol={selected}
+                      candles={ohlcv.candles}
+                      instances={indicators.indicators}
+                    />
+                    <PriceSummary candles={ohlcv.candles} />
+                  </div>
+                }
               />
             )}
           </Card>
 
-          {ohlcv?.candles.length ? (
-            <MarketAnalysisPanel
-              symbol={selected}
-              candles={ohlcv.candles}
-              instances={indicators.indicators}
-            />
+          {/* Đang phóng to thì hai khối này đã nằm ở cột phải của lớp phủ — xem `sidePanel`. */}
+          {ohlcv?.candles.length && !chartExpanded ? (
+            <>
+              <MarketAnalysisPanel
+                symbol={selected}
+                candles={ohlcv.candles}
+                instances={indicators.indicators}
+              />
+              <PriceSummary candles={ohlcv.candles} />
+            </>
           ) : null}
-
-          {ohlcv?.candles.length ? <PriceSummary candles={ohlcv.candles} /> : null}
         </div>
       </div>
 

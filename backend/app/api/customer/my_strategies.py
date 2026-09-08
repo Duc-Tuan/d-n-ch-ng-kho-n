@@ -200,9 +200,16 @@ def update_my_strategy(
 
 @router.delete("/{strategy_id}", response_model=Message)
 def delete_my_strategy(strategy_id: int, user: ActiveUser, db: DbSession) -> Message:
-    user_strategy_service.delete(db, user, strategy_id)
+    result = user_strategy_service.delete(db, user, strategy_id)
     db.commit()
-    return Message(message="Đã xoá chiến lược và thu hồi mọi lượt chia sẻ")
+
+    # Xoá file **sau** commit. Ngược lại, một lỗi ở bước ghi CSDL sẽ để lại bản ghi trỏ tới file
+    # đã bốc hơi — cùng lý do với `delete_strategy_document` ngay bên dưới.
+    for stored_name in result.stored_names:
+        storage_service.delete_file(stored_name)
+
+    detail = f" cùng {result.signals} tín hiệu" if result.signals else ""
+    return Message(message=f"Đã xoá chiến lược{detail} và thu hồi mọi lượt chia sẻ")
 
 
 # ======================================================================
