@@ -255,10 +255,13 @@ export default function MarketPage() {
                 // hết cỡ mới là lúc người dùng soi kỹ và cần đối chiếu.
                 sidePanel={
                   <div className="space-y-3">
+                    {/* `dense` cứng ở đây chứ không lấy theo `chartExpanded`: khối này chỉ được
+                        dựng khi đang phóng to (xem `PriceChart`), nên nó luôn ở cột hẹp. */}
                     <MarketAnalysisPanel
                       symbol={selected}
                       candles={ohlcv.candles}
                       instances={indicators.indicators}
+                      dense
                     />
                     <PriceSummary candles={ohlcv.candles} />
                   </div>

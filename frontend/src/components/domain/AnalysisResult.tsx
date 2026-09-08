@@ -141,11 +141,23 @@ export function AnalysisResult({
   onRetry,
   retrying,
   retryError,
+  dense = false,
 }: {
   analysis: Analysis;
   onRetry?: () => void;
   retrying?: boolean;
   retryError?: string | null;
+  /**
+   * Đang nằm trong một cột hẹp — cụ thể là cột phân tích bên phải lúc biểu đồ phóng to kín màn
+   * hình (~26–30rem).
+   *
+   * Cần một cờ vì `md:` của Tailwind đo **bề rộng cửa sổ**, không đo bề rộng khối chứa. Trên
+   * màn hình rộng thì `md:` luôn đúng, nên hai thẻ kịch bản vẫn xếp cạnh nhau trong một cột
+   * chưa tới 30rem: mỗi thẻ còn khoảng 13rem cho ba cột giá vào / cắt lỗ / chốt lời, và cả ba
+   * con số đều gãy dòng. Truy vấn theo khối chứa (`@container`) sẽ giải quyết gọn hơn, nhưng
+   * Tailwind 3 phải cài thêm plugin mới có.
+   */
+  dense?: boolean;
 }) {
   const running = PENDING_STATUS.includes(analysis.status);
   /** Bản theo biểu đồ: căn cứ là bộ chỉ báo của người dùng, không phải chiến lược nào cả. */
@@ -246,7 +258,8 @@ export function AnalysisResult({
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
             {analysis.setups.length} kịch bản vào lệnh
           </p>
-          <div className="grid gap-3 md:grid-cols-2">
+          {/* Cột hẹp: mỗi kịch bản một dòng, chiếm trọn bề ngang. */}
+          <div className={cn('grid gap-3', !dense && 'md:grid-cols-2')}>
             {analysis.setups.map((setup) => (
               <SetupCard key={setup.id} setup={setup} />
             ))}

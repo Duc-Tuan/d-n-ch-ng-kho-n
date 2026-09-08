@@ -38,11 +38,14 @@ export function MarketAnalysisPanel({
   symbol,
   candles,
   instances,
+  dense = false,
 }: {
   symbol: string;
   candles: Candle[];
   /** Chỉ báo đang bật trên biểu đồ — chính là căn cứ của lượt phân tích. */
   instances: IndicatorInstance[];
+  /** Đang nằm ở cột phải hẹp của lớp phủ phóng to — xem `AnalysisResult`. */
+  dense?: boolean;
 }) {
   const toast = useToast();
   const [polling, setPolling] = useState(false);
@@ -56,8 +59,13 @@ export function MarketAnalysisPanel({
    */
   const [notes, setNotes] = useLocalStorage<Record<string, string>>('market-analysis-notes', {});
   const note = notes[symbol] ?? '';
-  /** Hoãn một nhịp trước khi đi tìm: gõ tới đâu gọi máy chủ tới đó thì mỗi phím là một lượt gọi. */
-  const askedNote = useDebounced(note, 400);
+  /**
+   * Hoãn một nhịp trước khi đi tìm: gõ tới đâu gọi máy chủ tới đó thì mỗi phím là một lượt gọi.
+   *
+   * 800ms chứ không phải 400ms: khoảng ngắt tự nhiên giữa hai từ của một câu tiếng Việt thường
+   * dài hơn 400ms, nên mức cũ vẫn bắn đi vài lượt giữa lúc người dùng đang viết dở.
+   */
+  const askedNote = useDebounced(note, 800);
 
   /** Ảnh chụp bộ chỉ báo, tính lại mỗi khi người dùng đổi chỉ báo hoặc đổi mã. */
   const snapshot = useMemo(
@@ -80,12 +88,30 @@ export function MarketAnalysisPanel({
   const { data, error, isLoading, refresh } = useApiQuery<Response>(
     symbol ? `${CUSTOMER}/analysis/market` : null,
     { symbol, indicators: applied, note: askedNote },
-    // 3 giây, cùng lý do như bên chiến lược: một lượt AI mất vài chục giây tới vài phút nên hỏi
-    // dày hơn chỉ tốn lượt gọi. `0` là tắt hẳn trong SWR.
-    { refreshInterval: polling ? 3000 : 0 },
+    {
+      // 3 giây, cùng lý do như bên chiến lược: một lượt AI mất vài chục giây tới vài phút nên
+      // hỏi dày hơn chỉ tốn lượt gọi. `0` là tắt hẳn trong SWR.
+      refreshInterval: polling ? 3000 : 0,
+      /**
+       * Giữ kết quả cũ trên màn hình trong lúc đi tìm kết quả của câu hỏi mới.
+       *
+       * Lời dặn nằm trong khoá truy vấn, nên mỗi lần `askedNote` đổi là SWR coi như một khoá
+       * khác: `data` về `undefined`, `isLoading` bật lên, và cả khối kết quả — một thẻ cao vài
+       * trăm điểm ảnh — bị thay bằng một ô chờ cao chừng tám mươi. Gõ vài chữ là chớp vài lần,
+       * và ở chế độ phóng to thì cột phải cuộn giật theo mỗi lần như vậy.
+       */
+      keepPreviousData: true,
+    },
   );
 
-  const analysis = data?.analysis ?? null;
+  /**
+   * Kết quả giữ lại chỉ dùng khi **vẫn cùng một mã**.
+   *
+   * `keepPreviousData` không phân biệt phần nào của khoá vừa đổi. Đổi câu hỏi mà giữ bản cũ là
+   * đúng ý; đổi mã mà giữ bản cũ thì màn hình đang nói về HPG lại trưng nhận định của VNM.
+   */
+  const staleSymbol = !!data?.analysis && data.analysis.symbol !== symbol;
+  const analysis = staleSymbol ? null : (data?.analysis ?? null);
   const quota = data?.quota;
   const running = !!analysis && PENDING_STATUS.includes(analysis.status);
 
@@ -199,7 +225,7 @@ export function MarketAnalysisPanel({
         )}
       </Card>
 
-      {isLoading ? (
+      {isLoading || staleSymbol ? (
         <Card>
           <Spinner label="Đang kiểm tra kết quả phân tích…" />
         </Card>
@@ -221,6 +247,7 @@ export function MarketAnalysisPanel({
       ) : (
         <AnalysisResult
           analysis={analysis}
+          dense={dense}
           retrying={retry.loading}
           retryError={retry.error?.message ?? null}
           onRetry={async () => {
