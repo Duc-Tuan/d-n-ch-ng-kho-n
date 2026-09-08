@@ -228,6 +228,15 @@ export type NotificationItem = {
   status: string;
   read_at: string | null;
   created_at: string;
+  /**
+   * Màn hình mở khi bấm vào thông báo. `null` = thông báo chỉ để đọc.
+   *
+   * Máy chủ tính lúc đọc chứ không lưu trong bảng (xem `services/notification_links.py` bên
+   * backend), nên đổi route ở đây không làm hỏng những dòng đã ghi từ trước.
+   */
+  link: string | null;
+  /** `info` | `warning` | `danger` — cùng thang cho cả hai site. */
+  level: string;
 };
 
 export type NotificationPreference = {

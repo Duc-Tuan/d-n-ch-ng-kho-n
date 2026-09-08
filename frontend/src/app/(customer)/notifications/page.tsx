@@ -1,14 +1,38 @@
 'use client';
 
-import { Button, Card, EmptyState, Pagination, Spinner } from '@/components/ui';
+/**
+ * Màn thông báo đầy đủ của khách hàng.
+ *
+ * Cùng cách cư xử với hộp thông báo bên site quản trị: bấm vào một dòng thì đánh dấu đã đọc rồi
+ * **đi tới màn chứa nội dung của nó** (đường dẫn do máy chủ tính — xem `notification_links.py`).
+ * Dòng nào không dẫn đi đâu thì không vẽ mũi tên, để người đọc biết trước là bấm cũng không có
+ * gì xảy ra.
+ *
+ * `?highlight=<id>` tô sáng đúng một dòng — dùng khi menu chuông không có đích cụ thể và phải
+ * đẩy người dùng sang đây.
+ */
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
+
+import { Button, Card, EmptyState, Icon, Pagination, Spinner } from '@/components/ui';
 import { useApiMutation, useApiQuery, usePagination, useToast } from '@/hooks';
 import { CUSTOMER, api } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fromNow } from '@/lib/datetime';
+import { formatDateTime, fromNow } from '@/lib/datetime';
 import type { Message, NotificationItem, Page } from '@/types';
 
-export default function NotificationsPage() {
+/** Chấm đầu dòng theo mức khẩn — cùng bộ màu với menu chuông và hộp thông báo nhân viên. */
+const LEVEL_DOT: Record<string, string> = {
+  info: 'bg-brand',
+  warning: 'bg-tone-amber-fg',
+  danger: 'bg-tone-red-fg',
+};
+
+function NotificationsContent() {
+  const router = useRouter();
   const toast = useToast();
+  const searchParams = useSearchParams();
+  const highlight = Number(searchParams.get('highlight') ?? 0);
   const { page, size, setPage } = usePagination(20);
 
   const { data, isLoading, refresh } = useApiQuery<Page<NotificationItem>>(
@@ -24,6 +48,16 @@ export default function NotificationsPage() {
   );
 
   const hasUnread = data?.items.some((n) => !n.read_at);
+
+  async function open(item: NotificationItem) {
+    if (!item.read_at) {
+      // Không chờ `refresh()` trước khi chuyển màn: đánh dấu đã đọc là việc phụ, còn thứ người
+      // dùng vừa yêu cầu là mở nội dung.
+      const result = await markRead.mutate(item.id);
+      if (result) refresh();
+    }
+    if (item.link) router.push(item.link);
+  }
 
   return (
     <div className="flex h-full flex-col space-y-5">
@@ -62,20 +96,19 @@ export default function NotificationsPage() {
               {data.items.map((notification) => (
                 <li key={notification.id}>
                   <button
-                    onClick={async () => {
-                      if (notification.read_at) return;
-                      const result = await markRead.mutate(notification.id);
-                      if (result) refresh();
-                    }}
+                    onClick={() => void open(notification)}
                     className={cn(
                       'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-ink-50',
                       !notification.read_at && 'bg-ink-100/50',
+                      notification.id === highlight && 'ring-2 ring-inset ring-ink-900',
                     )}
                   >
                     <span
                       className={cn(
                         'mt-1.5 h-2 w-2 shrink-0 rounded-full',
-                        notification.read_at ? 'bg-transparent' : 'bg-brand',
+                        notification.read_at
+                          ? 'bg-transparent'
+                          : (LEVEL_DOT[notification.level] ?? LEVEL_DOT.info),
                       )}
                       aria-hidden
                     />
@@ -89,9 +122,18 @@ export default function NotificationsPage() {
                         </p>
                       )}
                       <p className="mt-1 text-xs text-ink-400">
-                        {fromNow(notification.created_at)}
+                        {fromNow(notification.created_at)} ·{' '}
+                        {formatDateTime(notification.created_at)}
                       </p>
                     </div>
+                    {/* Mũi tên chỉ hiện khi bấm vào thật sự đi đâu đó. */}
+                    {notification.link && (
+                      <Icon
+                        name="chevron-right"
+                        size={16}
+                        className="mt-1 shrink-0 text-ink-400"
+                      />
+                    )}
                   </button>
                 </li>
               ))}
@@ -112,5 +154,15 @@ export default function NotificationsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function NotificationsPage() {
+  // `useSearchParams` bắt buộc phải nằm trong Suspense ở App Router, nếu không `next build` từ
+  // chối dựng trang.
+  return (
+    <Suspense fallback={<Spinner label="Đang tải…" />}>
+      <NotificationsContent />
+    </Suspense>
   );
 }

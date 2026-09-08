@@ -122,7 +122,7 @@ export function CustomerShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
-            <NotificationMenu basePath={CUSTOMER} listPath="/notifications" />
+            <NotificationMenu apiPath={`${CUSTOMER}/notifications`} listPath="/notifications" />
             <UserMenu
               name={user?.full_name ?? ''}
               subtitle={user?.customer_code ?? undefined}

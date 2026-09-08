@@ -297,7 +297,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="flex items-center gap-1">
-            <NotificationMenu basePath={ADMIN} listPath="/admin/notifications-inbox" />
+            <NotificationMenu apiPath={`${ADMIN}/notifications-inbox`} listPath="/admin/notifications-inbox" />
             <UserMenu
               name={staff?.full_name ?? staff?.username ?? ''}
               subtitle={staff?.roles.join(', ')}

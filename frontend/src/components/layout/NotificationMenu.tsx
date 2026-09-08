@@ -1,11 +1,19 @@
 'use client';
 
 /**
- * Menu thông báo nhanh ở header.
+ * Menu thông báo nhanh ở header — dùng chung cho cả site khách hàng và site quản trị.
  *
- * Xem nhanh vài thông báo chưa đọc ngay tại chỗ, **không rời trang đang làm việc**. Chỉ khi bấm
- * "Xem tất cả" mới chuyển sang màn thông báo riêng. Bấm vào một thông báo thì đánh dấu đã đọc và
- * đi tới nội dung liên quan.
+ * Xem nhanh vài thông báo chưa đọc ngay tại chỗ, **không rời trang đang làm việc**. Bấm vào một
+ * thông báo thì đánh dấu đã đọc rồi đi thẳng tới màn chứa nội dung của nó; chỉ khi bấm "Xem tất
+ * cả" mới sang màn thông báo đầy đủ.
+ *
+ * Nhận `apiPath` **đầy đủ** thay vì ghép từ tiền tố site.
+ *
+ * Bản trước nhận `basePath` (`/customer` hoặc `/admin`) rồi tự nối `"/notifications"`. Cách đó
+ * đúng ở site khách hàng nhưng sai ở site quản trị: hộp thông báo của nhân viên là bảng khác,
+ * quyền đọc khác, và nằm ở `/admin/notifications-inbox` — `/admin/notifications/*` chỉ là nhóm
+ * endpoint gửi thông báo hàng loạt cho khách. Chuông bên quản trị vì thế gọi vào chỗ không tồn
+ * tại: luôn 404, luôn hiện 0 chưa đọc, danh sách luôn rỗng, và không có lỗi nào hiện ra màn hình.
  */
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
@@ -19,12 +27,19 @@ import type { NotificationItem, Page } from '@/types';
 
 const PREVIEW_COUNT = 6;
 
+/** Chấm đầu dòng theo mức khẩn — cùng bộ màu với hộp thông báo của nhân viên. */
+const LEVEL_DOT: Record<string, string> = {
+  info: 'bg-brand',
+  warning: 'bg-tone-amber-fg',
+  danger: 'bg-tone-red-fg',
+};
+
 export function NotificationMenu({
-  basePath,
+  apiPath,
   listPath,
 }: {
-  /** Tiền tố API: `/customer` hoặc `/admin`. */
-  basePath: string;
+  /** Đường dẫn API đầy đủ của hộp thông báo, ví dụ `/customer/notifications`. */
+  apiPath: string;
   /** Đường dẫn màn thông báo đầy đủ. */
   listPath: string;
 }) {
@@ -34,14 +49,14 @@ export function NotificationMenu({
   const ref = useClickOutside<HTMLDivElement>(close);
 
   const { data: unread, refresh: refreshCount } = useApiQuery<{ count: number }>(
-    `${basePath}/notifications/unread-count`,
+    `${apiPath}/unread-count`,
     undefined,
     { refreshInterval: 60_000 },
   );
 
   // Chỉ tải danh sách khi người dùng thực sự mở menu — không tốn request nền.
   const { data, isLoading, refresh } = useApiQuery<Page<NotificationItem>>(
-    open ? `${basePath}/notifications` : null,
+    open ? apiPath : null,
     { size: PREVIEW_COUNT, unread_only: true },
   );
 
@@ -52,19 +67,21 @@ export function NotificationMenu({
     close();
     if (!item.read_at) {
       try {
-        await api.post(`${basePath}/notifications/${item.id}/read`);
+        await api.post(`${apiPath}/${item.id}/read`);
         refresh();
         refreshCount();
       } catch {
         /* đánh dấu đã đọc thất bại không được chặn việc mở nội dung */
       }
     }
-    router.push(`${listPath}?highlight=${item.id}`);
+    // Có đích thật thì đi thẳng tới nội dung. Không có thì mở màn thông báo và tô sáng đúng dòng
+    // đó — vẫn hơn là bấm xong không có gì xảy ra.
+    router.push(item.link ?? `${listPath}?highlight=${item.id}`);
   }
 
   async function markAllRead() {
     try {
-      await api.post(`${basePath}/notifications/read-all`);
+      await api.post(`${apiPath}/read-all`);
       refresh();
       refreshCount();
     } catch {
@@ -130,7 +147,10 @@ export function NotificationMenu({
                       className="flex w-full items-start gap-2.5 px-4 py-3 text-left transition-colors hover:bg-ink-50"
                     >
                       <span
-                        className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand"
+                        className={cn(
+                          'mt-1.5 h-2 w-2 shrink-0 rounded-full',
+                          LEVEL_DOT[item.level] ?? LEVEL_DOT.info,
+                        )}
                         aria-hidden
                       />
                       <span className="min-w-0 flex-1">
@@ -148,6 +168,15 @@ export function NotificationMenu({
                           {fromNow(item.created_at)}
                         </span>
                       </span>
+                      {/* Mũi tên chỉ hiện khi bấm vào thật sự đi đâu đó — hứa suông rồi đứng yên
+                          còn khó chịu hơn là không hứa. */}
+                      {item.link && (
+                        <Icon
+                          name="chevron-right"
+                          size={15}
+                          className="mt-1 shrink-0 text-ink-400"
+                        />
+                      )}
                     </button>
                   </li>
                 ))}

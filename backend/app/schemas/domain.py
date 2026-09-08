@@ -361,6 +361,11 @@ class NotificationOut(ORMModel):
     status: str
     read_at: datetime | None = None
     created_at: datetime
+    #: Màn hình mở khi bấm vào thông báo — tính lúc đọc, xem `services/notification_links.py`.
+    #: `None` nghĩa là thông báo chỉ để đọc, giao diện không vẽ mũi tên.
+    link: str | None = None
+    #: `info` | `warning` | `danger`, cùng thang với hộp thông báo của nhân viên.
+    level: str = "info"
 
 
 class NotificationPreferenceItem(BaseModel):

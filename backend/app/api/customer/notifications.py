@@ -33,7 +33,7 @@ from app.schemas.domain import (
     TelegramStatusOut,
     TelegramVerifyRequest,
 )
-from app.services import telegram_service
+from app.services import notification_links, telegram_service
 
 router = APIRouter(tags=["customer-notifications"])
 
@@ -54,6 +54,18 @@ NOTIFICATION_LABELS: dict[str, str] = {
 # ======================================================================
 # THÔNG BÁO IN-APP
 # ======================================================================
+def _to_out(row: Notification) -> NotificationOut:
+    """Bản ghi + đường dẫn và mức khẩn tính lúc đọc.
+
+    Hai trường này không nằm trong bảng: đường dẫn là chuyện của giao diện, mà giao diện đổi route
+    thì mọi dòng đã lưu sẽ trỏ vào trang không còn tồn tại. Xem `services/notification_links.py`.
+    """
+    item = NotificationOut.model_validate(row)
+    item.link = notification_links.link_for(row)
+    item.level = notification_links.level_for(row)
+    return item
+
+
 @router.get("/notifications", response_model=PageResponse[NotificationOut])
 def list_notifications(user: CurrentUser, db: DbSession, params: Pagination,
                        unread_only: bool = False) -> dict:
@@ -65,7 +77,7 @@ def list_notifications(user: CurrentUser, db: DbSession, params: Pagination,
         stmt = stmt.where(Notification.read_at.is_(None))
     stmt = stmt.order_by(Notification.id.desc())
 
-    return paginate_page(db, stmt, params, NotificationOut.model_validate)
+    return paginate_page(db, stmt, params, _to_out)
 
 
 @router.get("/notifications/unread-count", response_model=dict)

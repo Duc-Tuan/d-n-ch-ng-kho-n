@@ -860,7 +860,13 @@ def answer_question(question_id: int, payload: QuestionAnswerRequest, staff: Can
             db, user=user, code=NotificationCode.QA_ANSWERED,
             channels=[NotificationChannel.EMAIL, NotificationChannel.IN_APP],
             reference_id=f"qa:{question.id}",
-            context={"full_name": user.full_name, "question": question.question[:200]},
+            # `strategy_id` không dùng trong nội dung email — nó ở đây để thông báo in-app biết
+            # bấm vào thì mở màn nào. Hỏi đáp nằm trong màn chiến lược, không có màn riêng.
+            context={
+                "full_name": user.full_name,
+                "question": question.question[:200],
+                "strategy_id": question.strategy_id,
+            },
         )
         # YC16 — khách hàng đang mở màn hỏi đáp thấy câu trả lời ngay, không phải tải lại trang.
         realtime.broadcast_customer_event(
