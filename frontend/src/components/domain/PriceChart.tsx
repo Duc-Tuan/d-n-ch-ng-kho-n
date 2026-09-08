@@ -517,6 +517,7 @@ export function PriceChart({
     const markers: NonNullable<IndicatorShapes['markers']> = [];
     const labels: NonNullable<IndicatorShapes['labels']> = [];
     const tables: NonNullable<IndicatorShapes['tables']> = [];
+    const gauges: NonNullable<IndicatorShapes['gauges']> = [];
 
     for (const { instance, def } of activeOverlays) {
       const out = def.computeShapes?.(series, instance.params);
@@ -526,11 +527,12 @@ export function PriceChart({
       if (out.markers) markers.push(...out.markers);
       if (out.labels) labels.push(...out.labels);
       if (out.tables) tables.push(...out.tables);
+      if (out.gauges) gauges.push(...out.gauges);
     }
 
     // `setMarkers` đòi thứ tự thời gian tăng dần, nếu không nó bỏ qua phần lệch.
     markers.sort((a, b) => a.time - b.time);
-    return { boxes, lines, markers, labels, tables };
+    return { boxes, lines, markers, labels, tables, gauges };
   }, [activeOverlays, series]);
 
   /** Trục thời gian luôn nằm ở biểu đồ **cuối cùng còn hiện** — vẽ ở mọi cái là lặp ba lần. */

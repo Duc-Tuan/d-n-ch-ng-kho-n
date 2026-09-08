@@ -134,11 +134,20 @@ export function IndicatorPane({
         series =
           style.type === 'histogram'
             ? chart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false })
-            : chart.addLineSeries({
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: false,
-              });
+            : style.type === 'baseline'
+              ? // Tô từ đường về mức 0 — cách duy nhất dựng được dải mây, vì thư viện không có
+                // kiểu "tô giữa hai đường".
+                chart.addBaselineSeries({
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                  crosshairMarkerVisible: false,
+                  baseValue: { type: 'price', price: 0 },
+                })
+              : chart.addLineSeries({
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                  crosshairMarkerVisible: false,
+                });
         map.set(plot.key, series);
 
         // Mức ngang cố định (RSI 70/30, CCI ±100) gắn vào series đầu tiên của cửa sổ.
@@ -161,11 +170,22 @@ export function IndicatorPane({
         priceFormat: { type: 'price', precision, minMove: 1 / 10 ** precision },
         ...(style.type === 'histogram'
           ? { color: style.color }
-          : {
-              color: style.color,
-              lineWidth: style.lineWidth ?? 1,
-              lineStyle: LINE_STYLE_MAP[style.lineStyle ?? 'solid'],
-            }),
+          : style.type === 'baseline'
+            ? {
+                topLineColor: style.color,
+                bottomLineColor: style.color,
+                // Đậm ở đường, nhạt dần về mức 0: dải mây có hình khối thay vì một mảng phẳng.
+                topFillColor1: style.fill ?? style.color,
+                topFillColor2: 'rgba(0, 0, 0, 0)',
+                bottomFillColor1: 'rgba(0, 0, 0, 0)',
+                bottomFillColor2: style.fill ?? style.color,
+                lineWidth: style.lineWidth ?? 1,
+              }
+            : {
+                color: style.color,
+                lineWidth: style.lineWidth ?? 1,
+                lineStyle: LINE_STYLE_MAP[style.lineStyle ?? 'solid'],
+              }),
       } as never);
 
       /**

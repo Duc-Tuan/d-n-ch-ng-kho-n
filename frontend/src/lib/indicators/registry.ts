@@ -10,6 +10,7 @@ import { LIQUIDITY_INDICATORS } from '@/lib/indicators/liquidity';
 import { OSCILLATOR_INDICATORS } from '@/lib/indicators/oscillators';
 import { OVERLAY_INDICATORS } from '@/lib/indicators/overlays';
 import { PROFILE_INDICATORS } from '@/lib/indicators/profiles';
+import { QUANTUM_INDICATORS } from '@/lib/indicators/quantum/defs';
 import { SMC_INDICATORS } from '@/lib/indicators/smc';
 import { STATISTICAL_INDICATORS } from '@/lib/indicators/statistical';
 import { defaultParams, type IndicatorDef, type IndicatorInstance } from '@/lib/indicators/types';
@@ -21,6 +22,9 @@ function uid(prefix = 'ind'): string {
 
 export const INDICATORS: IndicatorDef[] = [
   ...OVERLAY_INDICATORS,
+  // Bộ tổng hợp lên đầu nhóm SMC: nó gọi lại chính những khối bên dưới, nên người dùng thấy
+  // nó trước rồi mới tới các mảnh rời là đúng thứ tự họ sẽ chọn.
+  ...QUANTUM_INDICATORS,
   ...SMC_INDICATORS,
   ...ICT_INDICATORS,
   ...LIQUIDITY_INDICATORS,

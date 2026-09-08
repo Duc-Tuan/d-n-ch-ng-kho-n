@@ -140,6 +140,11 @@ export function IndicatorsModal({
                           {CATEGORY_LABELS[def.category]} ·{' '}
                           {def.placement === 'overlay' ? 'Vẽ trên biểu đồ giá' : 'Cửa sổ riêng'}
                         </span>
+                        {def.note && (
+                          <span className="mt-0.5 block text-xs leading-relaxed text-ink-500">
+                            {def.note}
+                          </span>
+                        )}
                       </span>
 
                       <Badge tone="gray">{def.short}</Badge>
