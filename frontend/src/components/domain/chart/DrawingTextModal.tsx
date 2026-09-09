@@ -15,28 +15,38 @@ export function DrawingTextModal({
   open,
   initial = '',
   title,
+  hint = 'Xuống dòng được. Ctrl + Enter để xong.',
   onSubmit,
   onCancel,
 }: {
   open: boolean;
   initial?: string;
   title: string;
+  /** Dòng nhắc dưới ô nhập. Sửa nhãn mã tự động cần một lời cảnh báo mà ghi chú thường không có. */
+  hint?: string;
   onSubmit: (text: string) => void;
   onCancel: () => void;
 }) {
   const [text, setText] = useState(initial);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Nội dung mở sẵn chỉ được đọc ở **lúc mở**. Nó theo mã đang xem, mà mã có thể đổi ngay sau
+  // lưng ô nhập (giá chạy về, người dùng bấm mã khác ở cửa sổ bên) — chép thẳng vào danh sách
+  // phụ thuộc thì một cú đổi mã như vậy xoá sạch câu đang gõ dở.
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
+
   // Mỗi lần mở là một ghi chú khác: nạp lại nội dung và đưa con trỏ vào ô, khỏi phải bấm thêm.
+  // Bôi đen luôn để gõ đè lên phần mở sẵn, khỏi phải xoá tay.
   useEffect(() => {
     if (!open) return;
-    setText(initial);
+    setText(initialRef.current);
     const id = requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
     });
     return () => cancelAnimationFrame(id);
-  }, [open, initial]);
+  }, [open]);
 
   const submit = () => {
     const value = text.trim();
@@ -75,7 +85,7 @@ export function DrawingTextModal({
           }
         }}
         placeholder={['Ví dụ: vùng kháng cự 28.5', 'chờ phá vỡ mới vào'].join('\n')}
-        hint="Xuống dòng được. Ctrl + Enter để xong."
+        hint={hint}
       />
     </Modal>
   );

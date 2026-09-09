@@ -18,6 +18,7 @@ import {
   FONT_LABELS,
   FONT_SIZES,
   FONT_STACKS,
+  SYMBOL_TOKEN,
   type DrawingFont,
   type DrawingStyle,
 } from '@/lib/drawings/types';
@@ -214,8 +215,16 @@ export function DrawingStyleBar({ store }: { store: DrawingStore }) {
         open={editingText}
         initial={drawing.style.text ?? ''}
         title={drawing.tool === 'note' ? 'Sửa ghi chú dán trên khung' : 'Sửa văn bản trên biểu đồ'}
+        hint={
+          drawing.dynamicText
+            ? 'Đang tự đổi theo mã đang xem. Sửa thành chữ khác là nó cố định lại.'
+            : undefined
+        }
         onSubmit={(text) => {
-          store.updateStyle(drawing.id, { text });
+          // Ô nhập bày ra mã đã thay sẵn, nên "mở ra rồi bấm Xong" là thao tác không đổi gì —
+          // ghi thẳng chuỗi đó xuống sẽ đóng băng nhãn ở mã hiện tại mà người dùng không hề định.
+          const unchanged = drawing.dynamicText && text === drawing.style.text;
+          store.updateStyle(drawing.id, { text: unchanged ? SYMBOL_TOKEN : text });
           setEditingText(false);
         }}
         onCancel={() => setEditingText(false)}

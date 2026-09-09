@@ -212,7 +212,7 @@ export function PriceChart({
    *  Gắn theo **mã và khung**, không chỉ theo mã: một đường xu hướng nối hai đáy cách nhau sáu
    *  tháng trên biểu đồ ngày, khi hiện lại trên biểu đồ 1 phút, sẽ nằm ngoài toàn bộ vùng nhìn
    *  — người dùng chỉ thấy hình vẽ của mình biến mất mà không hiểu vì sao. */
-  const drawings = useDrawings(symbol ? `${symbol}@${timeframe}` : undefined);
+  const drawings = useDrawings(symbol ? `${symbol}@${timeframe}` : undefined, symbol);
 
   // Dùng ref trong callback của biểu đồ để không phải gắn lại sự kiện mỗi lần dữ liệu đổi.
   const stateRef = useRef({ candles, loadingMore, exhausted, symbol, timeframe, switching });

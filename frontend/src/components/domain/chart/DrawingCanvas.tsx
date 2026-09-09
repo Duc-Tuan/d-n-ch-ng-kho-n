@@ -21,7 +21,7 @@ import {
 } from '@/lib/drawings/coords';
 import { findDrawingAt } from '@/lib/drawings/hitTest';
 import { drawDrawing, type Pixel, type RenderPalette } from '@/lib/drawings/renderer';
-import { TOOL_META, type Drawing, type Point } from '@/lib/drawings/types';
+import { SYMBOL_TOKEN, TOOL_META, type Drawing, type Point } from '@/lib/drawings/types';
 import type { Candle } from '@/lib/indicators/math';
 
 import { isChartLive } from './chartLifecycle';
@@ -74,10 +74,10 @@ type Interaction =
       grabbedPixel: Pixel;
     };
 
-/** Ghi chú đang chờ người dùng nhập nội dung — hình chỉ được tạo sau khi bấm Xong. */
-type PendingText =
-  | { kind: 'text'; point: Point }
-  | { kind: 'note'; pin: { x: number; y: number } };
+/** Văn bản đang chờ người dùng nhập nội dung — hình chỉ được tạo sau khi bấm Xong. */
+interface PendingText {
+  point: Point;
+}
 
 /** Màu đọc lúc chạy từ biến CSS — site khách nền tối, site quản trị nền sáng. */
 function palette(): RenderPalette {
@@ -258,7 +258,7 @@ export function DrawingCanvas({
       // Văn bản chưa tạo hình ngay: mở ô nhập trước, có nội dung rồi mới tạo. Tạo trước rồi hỏi
       // sau thì lúc người dùng bấm Huỷ, trên biểu đồ đã nằm sẵn một hình rỗng vô hình.
       if (state.activeTool === 'text') {
-        setPendingText({ kind: 'text', point: points[0] });
+        setPendingText({ point: points[0] });
         interactionRef.current = { kind: 'idle' };
         setChartInteractive(true);
         render();
@@ -344,7 +344,23 @@ export function DrawingCanvas({
       // khung**, nên nó đứng yên khi biểu đồ kéo qua trái phải.
       if (tool === 'note') {
         const { width: w, height: h } = sizeRef.current;
-        if (w && h) setPendingText({ kind: 'note', pin: { x: pixel.x / w, y: pixel.y / h } });
+        if (w && h) {
+          // Bấm một cái là xong, không hỏi gì: nội dung mặc định đã biết trước — mã đang xem.
+          // Lưu ở dạng ký hiệu chứ không lưu "AAA", nên đổi mã là chữ đổi theo ngay tại chỗ.
+          // Muốn viết khác thì bấm nút sửa trên thanh chỉnh kiểu.
+          const id = state.add({
+            tool: 'note',
+            // Ghi chú dán không có điểm neo theo nến — vị trí nằm ở `pin`.
+            points: [],
+            pin: { x: pixel.x / w, y: pixel.y / h },
+            style: { ...state.defaultStyle, text: SYMBOL_TOKEN },
+            locked: false,
+            visible: true,
+          });
+          state.setActiveTool('cursor');
+          if (id) state.select(id);
+          render();
+        }
         interactionRef.current = { kind: 'idle' };
         return;
       }
@@ -567,26 +583,14 @@ export function DrawingCanvas({
   const commitText = (text: string) => {
     if (!pendingText) return;
     const state = storeRef.current;
-    const style = { ...state.defaultStyle, text };
 
-    const id =
-      pendingText.kind === 'note'
-        ? state.add({
-            tool: 'note',
-            // Ghi chú dán không có điểm neo theo nến — vị trí nằm ở `pin`.
-            points: [],
-            pin: pendingText.pin,
-            style,
-            locked: false,
-            visible: true,
-          })
-        : state.add({
-            tool: 'text',
-            points: [pendingText.point],
-            style,
-            locked: false,
-            visible: true,
-          });
+    const id = state.add({
+      tool: 'text',
+      points: [pendingText.point],
+      style: { ...state.defaultStyle, text },
+      locked: false,
+      visible: true,
+    });
 
     setPendingText(null);
     state.setActiveTool('cursor');
@@ -603,7 +607,7 @@ export function DrawingCanvas({
 
       <DrawingTextModal
         open={pendingText !== null}
-        title={pendingText?.kind === 'note' ? 'Ghi chú dán trên khung' : 'Văn bản trên biểu đồ'}
+        title="Văn bản trên biểu đồ"
         onSubmit={commitText}
         onCancel={() => {
           setPendingText(null);

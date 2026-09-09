@@ -7,6 +7,7 @@
  * không phải dữ liệu nghiệp vụ và cũng không cần đồng bộ giữa các thiết bị.
  *
  * Hình **gắn với mã**, khác hẳn danh sách chỉ báo (xem `useIndicators`, giữ nguyên khi đổi mã).
+ * Ngoại lệ duy nhất là ghi chú dán trên khung (`GLOBAL_SYMBOL`) — xem `add`.
  * Điểm neo lưu theo giá tuyệt đối, mà mỗi mã một vùng giá riêng — mang đường xu hướng của VNM
  * sang FPT thì nó rơi ra ngoài khung nhìn hoặc nằm lạc chỗ giữa biểu đồ.
  *
@@ -18,6 +19,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   DEFAULT_STYLE,
+  GLOBAL_SYMBOL,
+  resolveText,
+  SYMBOL_TOKEN,
   type Drawing,
   type DrawingStyle,
   type DrawingTool,
@@ -37,6 +41,25 @@ function uid(): string {
   return `draw_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Kéo ghi chú dán trên khung ở bản lưu cũ lên dùng chung mọi mã.
+ *
+ * Trước đây chúng bị gắn vào mã đang xem lúc tạo, nên vẽ ở AAA rồi sang ACB là mất hút, quay về
+ * AAA mới thấy lại. Chữ cũng đổi theo: ghi chú mà nội dung đúng bằng mã sở hữu thì vốn là một
+ * nhãn mã, chuyển sang ký hiệu để nó tiếp tục đổi theo mã thay vì đóng băng ở "AAA".
+ */
+function liftNote(item: Drawing): Drawing {
+  if (item.tool !== 'note' || item.symbol === GLOBAL_SYMBOL) return item;
+  // Khoá kho hình là `MÃ@khung thời gian` (xem `PriceChart`) — chỉ lấy phần mã.
+  const ticker = item.symbol.split('@')[0];
+  const text = item.style?.text?.trim();
+  return {
+    ...item,
+    symbol: GLOBAL_SYMBOL,
+    style: text && text === ticker ? { ...item.style, text: SYMBOL_TOKEN } : item.style,
+  };
+}
+
 function loadDrawings(): Drawing[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -44,9 +67,9 @@ function loadDrawings(): Drawing[] {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     // Một mục hỏng (bản lưu cũ, thiếu trường) không được phép làm hỏng cả danh sách.
-    return (parsed as Drawing[]).filter(
-      (item) => item?.id && item.symbol && item.tool && Array.isArray(item.points),
-    );
+    return (parsed as Drawing[])
+      .filter((item) => item?.id && item.symbol && item.tool && Array.isArray(item.points))
+      .map(liftNote);
   } catch {
     return [];
   }
@@ -91,7 +114,12 @@ export interface DrawingStore {
   clear: () => void;
 }
 
-export function useDrawings(symbol: string | undefined): DrawingStore {
+/**
+ * @param symbol Khoá kho hình — `PriceChart` dùng `MÃ@khung thời gian` để mỗi khung một bộ hình.
+ * @param ticker Mã trần để thay vào nhãn động. Thiếu thì lấy luôn `symbol`, chấp nhận cả đuôi
+ *   khung thời gian còn hơn hiện ra một ô trống.
+ */
+export function useDrawings(symbol: string | undefined, ticker?: string): DrawingStore {
   const [all, setAll] = useState<Drawing[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [hydrated, setHydrated] = useState(false);
@@ -124,10 +152,24 @@ export function useDrawings(symbol: string | undefined): DrawingStore {
     setActiveToolState('cursor');
   }, [symbol]);
 
-  const drawings = useMemo(
-    () => (symbol ? all.filter((item) => item.symbol === symbol) : []),
-    [all, symbol],
-  );
+  const drawings = useMemo(() => {
+    if (!symbol) return [];
+    const label = ticker ?? symbol;
+    return all
+      .filter((item) => item.symbol === symbol || item.symbol === GLOBAL_SYMBOL)
+      .map((item) => {
+        // Thay mã **ở đây**, một chỗ duy nhất, chứ không ở lớp vẽ: mọi nơi đọc `drawings` — lớp
+        // vẽ, phép bắt chuột, thanh chỉnh kiểu — đều cần đúng một chuỗi chữ, và đo hộp chữ theo
+        // ký hiệu `{symbol}` thì vùng bấm rộng hơn hẳn chữ đang hiện.
+        const text = item.style.text;
+        if (!text?.includes(SYMBOL_TOKEN)) return item;
+        return {
+          ...item,
+          dynamicText: true,
+          style: { ...item.style, text: resolveText(text, label) },
+        };
+      });
+  }, [all, symbol, ticker]);
 
   const setActiveTool = useCallback((tool: DrawingTool) => {
     setActiveToolState(tool);
@@ -141,7 +183,9 @@ export function useDrawings(symbol: string | undefined): DrawingStore {
       // Trả về id để nơi gọi chọn luôn hình vừa tạo — vẽ xong là thanh chỉnh kiểu hiện ra ngay,
       // khỏi phải bấm lại vào hình một lần nữa mới đổi được màu hay xoá.
       const id = uid();
-      setAll((current) => [...current, { ...drawing, id, symbol }]);
+      // Ghi chú dán trên khung dùng chung mọi mã; phần còn lại neo theo giá nên phải theo mã.
+      const owner = drawing.tool === 'note' ? GLOBAL_SYMBOL : symbol;
+      setAll((current) => [...current, { ...drawing, id, symbol: owner }]);
       return id;
     },
     [symbol],
@@ -185,7 +229,11 @@ export function useDrawings(symbol: string | undefined): DrawingStore {
 
   const clear = useCallback(() => {
     if (!symbol) return;
-    setAll((current) => current.filter((item) => item.symbol !== symbol));
+    // Xoá cả hình dùng chung: người dùng bấm "xoá hết" khi đang nhìn thấy chúng, để lại một cái
+    // nhãn vẫn nằm giữa biểu đồ thì đúng là nút bấm hỏng.
+    setAll((current) =>
+      current.filter((item) => item.symbol !== symbol && item.symbol !== GLOBAL_SYMBOL),
+    );
     setSelectedId(null);
   }, [symbol]);
 

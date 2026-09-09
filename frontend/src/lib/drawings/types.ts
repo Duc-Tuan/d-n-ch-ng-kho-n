@@ -29,6 +29,28 @@ export type DrawingTool =
   | 'brush'
   | 'measure';
 
+/**
+ * Mã giữ chỗ cho "mọi cổ phiếu" trong trường `Drawing.symbol`.
+ *
+ * Ghi chú dán trên khung neo theo **khung nhìn**, không theo giá, nên nó không thuộc về mã nào —
+ * lọc theo mã như mọi hình khác thì đổi mã một cái là nó biến mất, và nó phải còn nguyên đó thì
+ * mới có gì để đổi chữ theo.
+ */
+export const GLOBAL_SYMBOL = '*';
+
+/**
+ * Chỗ dành cho mã đang xem trong nội dung chữ.
+ *
+ * Bản lưu giữ **ký hiệu** chứ không giữ "VNM": thay sẵn thành mã lúc tạo thì sang mã khác không
+ * còn dấu vết nào để biết đây vốn là nhãn động, và nó đóng băng ở mã của ngày tạo ra.
+ */
+export const SYMBOL_TOKEN = '{symbol}';
+
+/** Thay ký hiệu mã trong chữ bằng mã đang xem. Chữ không có ký hiệu thì trả về nguyên vẹn. */
+export function resolveText(text: string, symbol: string): string {
+  return text.split(SYMBOL_TOKEN).join(symbol);
+}
+
 export interface Point {
   /** Giây unix — cùng thang với `Candle.time` của bộ chỉ báo. */
   time: number;
@@ -76,6 +98,10 @@ export interface Drawing {
   /**
    * Mã cổ phiếu chứa hình này. Điểm neo lưu theo (thời gian, **giá**), mà mỗi mã một vùng giá
    * riêng — dùng chung hình giữa các mã sẽ vẽ lạc chỗ hoàn toàn.
+   *
+   * Ngoại lệ là `GLOBAL_SYMBOL`: hình hiện trên mọi mã, dành cho ghi chú dán trên khung. Chỉ hình
+   * neo theo `pin` mới dùng chung được — hình neo theo giá mà dùng chung thì sang mã có vùng giá
+   * khác là rơi thẳng ra ngoài khung nhìn.
    */
   symbol: string;
   tool: DrawingTool;
@@ -92,6 +118,13 @@ export interface Drawing {
   style: DrawingStyle;
   locked: boolean;
   visible: boolean;
+  /**
+   * Chữ của hình vốn là nhãn động, và `style.text` bạn đang cầm đã được thay thành mã đang xem.
+   *
+   * Cờ **chỉ có lúc chạy**, do `useDrawings` gắn vào bản sao khi trả về; bản lưu không có nó. Nơi
+   * sửa chữ đọc cờ này để biết người dùng đang sửa một nhãn động hay một dòng chữ cố định.
+   */
+  dynamicText?: boolean;
 }
 
 export interface ToolMeta {
