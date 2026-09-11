@@ -146,6 +146,116 @@ def broadcast_customer_event(user_id: int, payload: dict[str, Any]) -> None:
     _dispatch(customer_registry, payload, user_id, None)
 
 
+# ======================================================================
+# KÊNH GIÁ — mô hình đăng ký theo mã
+# ======================================================================
+@dataclass
+class MarketConnection:
+    """Một trình duyệt đang mở bảng giá, kèm danh sách mã nó quan tâm."""
+
+    websocket: WebSocket
+    symbols: set[str] = field(default_factory=set)
+
+
+class MarketRegistry:
+    """Danh bạ kênh giá.
+
+    Vì sao tách hẳn khỏi `customer_registry` thay vì thêm một loại sự kiện: kênh khách hàng lọc
+    theo `principal_id` và **một chiều theo thiết kế** (BR-850). Giá là dữ liệu công khai, ai
+    cũng đọc được, nhưng lại cần chiều ngược lại — client phải nói được nó đang xem mã nào.
+    Nhét hai mô hình khác nhau vào một danh bạ là cách chắc chắn để một hôm nào đó gửi nhầm dữ
+    liệu riêng của khách này sang khách khác.
+    """
+
+    def __init__(self) -> None:
+        self._connections: list[MarketConnection] = []
+
+    def add(self, connection: MarketConnection) -> None:
+        bind_event_loop()
+        self._connections.append(connection)
+        log.info("ws:market: +1 kết nối (tổng %s)", len(self._connections))
+
+    def remove(self, websocket: WebSocket) -> None:
+        before = len(self._connections)
+        self._connections = [c for c in self._connections if c.websocket is not websocket]
+        if len(self._connections) != before:
+            log.info("ws:market: -1 kết nối (còn %s)", len(self._connections))
+
+    def find(self, websocket: WebSocket) -> MarketConnection | None:
+        for connection in self._connections:
+            if connection.websocket is websocket:
+                return connection
+        return None
+
+    @property
+    def connections(self) -> list[MarketConnection]:
+        return list(self._connections)
+
+    @property
+    def count(self) -> int:
+        return len(self._connections)
+
+    @property
+    def subscribed_symbols(self) -> set[str]:
+        result: set[str] = set()
+        for connection in self._connections:
+            result |= connection.symbols
+        return result
+
+
+market_registry = MarketRegistry()
+
+
+async def _send_quotes(items: list[tuple[MarketConnection, list[dict]]]) -> None:
+    dead: list[WebSocket] = []
+    for connection, quotes in items:
+        message = json.dumps(
+            {"type": "quotes", "quotes": quotes}, default=str, ensure_ascii=False
+        )
+        try:
+            await connection.websocket.send_text(message)
+        except Exception:
+            dead.append(connection.websocket)
+    for websocket in dead:
+        market_registry.remove(websocket)
+
+
+def broadcast_quotes(quotes: list[dict[str, Any]]) -> None:
+    """Đẩy các mã **vừa đổi giá** tới những kết nối đã đăng ký đúng mã đó.
+
+    Hai tầng lọc, cả hai đều cần: bộ poll đã bỏ những mã không đổi so với nhịp trước, và ở đây
+    bỏ tiếp những mã kết nối này không xem. Một bảng giá mở 60 dòng nhận vài trăm byte mỗi nhịp
+    thay vì 143 KB.
+    """
+    if not quotes:
+        return
+
+    by_symbol = {q["symbol"]: q for q in quotes}
+    items: list[tuple[MarketConnection, list[dict]]] = []
+    for connection in market_registry.connections:
+        if not connection.symbols:
+            continue
+        selected = [by_symbol[s] for s in connection.symbols if s in by_symbol]
+        if selected:
+            items.append((connection, selected))
+
+    if not items:
+        return
+
+    coroutine = _send_quotes(items)
+    try:
+        asyncio.get_running_loop().create_task(coroutine)
+        return
+    except RuntimeError:
+        pass
+
+    loop = _event_loop
+    if loop is None or loop.is_closed():
+        coroutine.close()
+        return
+    asyncio.run_coroutine_threadsafe(coroutine, loop)
+
+
 def broadcast_public_event(payload: dict[str, Any]) -> None:
     """Đẩy sự kiện **nội dung công khai** tới mọi khách hàng đang mở trang.
 

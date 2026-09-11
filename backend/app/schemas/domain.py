@@ -621,6 +621,13 @@ class TimeframeOut(BaseModel):
     retention_days: int | None = None
 
 
+class QuoteLevelOut(BaseModel):
+    """Một bậc dư mua hoặc dư bán."""
+
+    price: Money
+    volume: int
+
+
 class PriceBoardItem(BaseModel):
     symbol: str
     exchange: str
@@ -635,6 +642,25 @@ class PriceBoardItem(BaseModel):
     change: Money | None = None
     change_pct: float | None = None
     has_data: bool = False
+
+    # ---- Giá thời gian thực (BR-831). Chỉ **thêm** trường, không đổi tên trường nào ở trên:
+    # giao diện đang chạy phải tiếp tục chạy khi cờ real-time tắt, và mọi trường dưới đây đều
+    # rỗng trong trường hợp đó.
+    #: Dòng này đang mang giá đang chạy hay giá cuối phiên.
+    realtime: bool = False
+    ceiling: Money | None = None
+    floor: Money | None = None
+    avg_price: Money | None = None
+    #: Giá trị giao dịch, đơn vị nghìn đồng — suy ra từ giá trung bình nhân khối lượng.
+    value: Money | None = None
+    bids: list[QuoteLevelOut] = []
+    asks: list[QuoteLevelOut] = []
+    foreign_buy: int | None = None
+    foreign_sell: int | None = None
+    foreign_room: int | None = None
+    #: Cho quy ước màu của thị trường Việt Nam: tím là trần, xanh lam là sàn.
+    at_ceiling: bool = False
+    at_floor: bool = False
 
 
 # ======================================================================

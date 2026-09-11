@@ -32,6 +32,16 @@ async def lifespan(app: FastAPI):
     storage_root()  # đảm bảo thư mục lưu trữ tồn tại và nằm ngoài vùng public
     start_scheduler()
 
+    # Bắt tay TLS với nguồn giá **trước**, ngoài đường đi của nhịp poll đầu tiên: lần gọi đầu
+    # tới nhà cung cấp mất 30–40 giây (DNS + TLS), các lần sau 50–80 ms. Chạy ở luồng riêng để
+    # không giữ tiến trình khởi động lại chừng ấy thời gian.
+    if settings.market_realtime_enabled:
+        import threading
+
+        from app.services.market_data import quote_store
+
+        threading.Thread(target=quote_store.warm_up, name="quote-warmup", daemon=True).start()
+
     # Bể phân tích khởi động **không phụ thuộc** `ENABLE_SCHEDULER`: nút Phân tích là chức năng
     # khách hàng trả tiền để dùng, không phải một job vận hành có thể tắt.
     analysis_worker.start()
@@ -46,6 +56,10 @@ async def lifespan(app: FastAPI):
     yield
     shutdown_scheduler()
     analysis_worker.shutdown()
+
+    from app.services.market_data import quote_store
+
+    quote_store.close_provider()  # đóng kết nối giữ sẵn tới nguồn giá
     close_client()  # trả lại pool kết nối HTTP ra ngoài
 
 

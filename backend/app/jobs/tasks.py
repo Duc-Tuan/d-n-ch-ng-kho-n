@@ -814,3 +814,121 @@ def job_sync_news(run_date: date | None = None, triggered_by: str = "scheduler",
                 f"Đã thêm {totals['added']} tin mới. Các nguồn sau đang hỏng:\n\n{broken}\n\n"
                 "Thường là trang nguồn đổi giao diện. Mở màn Nguồn tin để kiểm tra lại đường dẫn.",
             )
+
+
+# ======================================================================
+# Giá thời gian thực và đồng bộ nến trong phiên (BR-831)
+# ======================================================================
+def job_poll_quotes() -> None:
+    """Một nhịp lấy giá cho bảng giá.
+
+    Cố ý **không** ghi `sync_jobs`: nhịp này chạy mỗi vài giây, một dòng nhật ký mỗi nhịp là
+    ~10.000 dòng mỗi phiên cho thứ không ai đọc lại. Số liệu vận hành sống trong bộ nhớ và hiện
+    ở màn quản trị qua `quote_store.store.status()`.
+    """
+    from app.services.market_data import quote_store
+
+    quote_store.poll_once()
+
+
+def job_sync_intraday(triggered_by: str = "scheduler") -> None:
+    """Kéo nến trong ngày **giữa phiên**, bù phần đã đóng mà cơ sở dữ liệu chưa có.
+
+    Đây là loại thiếu mà giá thời gian thực **không** được phép bù. Cây nến đang hình thành thì
+    dựng tại chỗ từ kho giá được, nhưng những nến đã đóng từ đầu phiên tới giờ thì không: bộ
+    poll chỉ tồn tại từ lúc backend khởi động, và nó lấy mẫu vài giây một lần nên đỉnh/đáy nằm
+    lọt giữa hai mẫu sẽ mất. Dữ liệu đúng đang nằm sẵn ở nhà cung cấp, xin về là xong.
+
+    Lý do thứ hai, quan trọng không kém — `job_sync_market` đã tự cảnh báo trong docstring của
+    nó: nguồn chỉ phục vụ một cửa sổ trượt vài trăm nến, khung 1 phút chỉ có ~4 phiên đệm, và
+    "bỏ lỡ là mất hẳn". Chạy một lượt duy nhất lúc 16:00 là một điểm hỏng duy nhất cho thứ không
+    có đường nào lấy lại; 20 lượt mỗi phiên là 20 lưới an toàn cho nhau.
+
+    Không ghi `sync_jobs` và không báo lỗi cho quản trị: đây là lượt **bổ sung**, chạy nhiều lần
+    mỗi phiên. Lượt 16:00 mới là lượt có nhật ký và có cảnh báo.
+    """
+    from app.models.market import Symbol
+    from app.services import market_data
+    from app.services.market_data import quote_store
+    from app.services.market_data import timeframes as tfs
+
+    if settings.market_intraday_sync_minutes <= 0:
+        return
+    if not quote_store.in_session_window():
+        return
+
+    codes = [c for c in tfs.parse_list(settings.market_intraday_timeframes, default=())
+             if not tfs.get(c).derived]
+    if not codes:
+        return
+
+    with session_scope() as db:
+        if not nav_sync_service.is_trading_day(db, local_today()):
+            return
+
+        symbols = list(db.scalars(
+            select(Symbol.symbol).where(Symbol.is_active.is_(True)).order_by(Symbol.symbol)
+        ).all())
+        if not symbols:
+            return
+
+        result = market_data.sync_ohlcv_batch(
+            db, symbols,
+            timeframes=codes,
+            # Chỉ cần phần của hôm nay. Xin rộng hơn cũng vô ích — nguồn trả `no_data` cho mọi
+            # khoảng nằm ngoài cửa sổ trượt của nó.
+            days=2,
+            delay_seconds=settings.market_sync_delay_seconds,
+        )
+
+    log.info(
+        "sync_intraday: %s lượt, %s nến ghi thêm, %s lượt lỗi",
+        result["processed"], result["rows_written"], result["failed"],
+    )
+
+
+def job_market_fullsync(triggered_by: str = "scheduler") -> None:
+    """Chạy mẻ "Đồng bộ tất cả" theo lịch — chu kỳ đặt ở màn Cấu hình hệ thống.
+
+    Dùng lại đúng `market_data.fullsync` mà nút bấm dùng, không có đường chạy thứ hai: hai lối
+    vào cho cùng một việc là hai chỗ để trạng thái tiến độ trôi khỏi nhau, và người xem màn hình
+    sẽ không biết thanh tiến độ đang nói về mẻ nào.
+
+    Đang có mẻ chạy dở thì bỏ qua lượt này, không xếp hàng. Hai luồng cùng gọi nhà cung cấp cho
+    cùng danh sách mã là cách nhanh nhất để bị chặn IP, và kết quả thu về không hơn một mẻ.
+    """
+    from app.core.exceptions import Conflict
+    from app.services import realtime as realtime_service
+    from app.services.market_data import fullsync
+    from app.services.market_data import timeframes as tfs
+
+    if fullsync.is_running():
+        log.info("fullsync theo lịch: bỏ qua, đang có mẻ chạy dở")
+        return
+
+    codes = [tfs.DAILY] + [
+        c for c in tfs.parse_list(settings.market_intraday_timeframes, default=())
+        if not tfs.get(c).derived
+    ]
+
+    try:
+        fullsync.start(
+            days=settings.market_history_days,
+            force_full=False,
+            triggered_by=triggered_by,
+            timeframes=codes,
+        )
+    except Conflict:
+        return
+
+    realtime_service.broadcast_staff_event({
+        "type": "market.fullsync.started",
+        "required_permission": "sync.view",
+        "title": "Đồng bộ toàn bộ nến đã bắt đầu",
+        "message": f"Mẻ tự động theo lịch · {len(codes)} khung: {', '.join(codes)}",
+    })
+    notification_service.notify_admins(
+        "Đồng bộ toàn bộ nến đã bắt đầu",
+        "Mẻ chạy tự động theo chu kỳ đặt ở màn Cấu hình hệ thống. "
+        "Mở màn Dữ liệu thị trường để theo dõi tiến độ.",
+    )

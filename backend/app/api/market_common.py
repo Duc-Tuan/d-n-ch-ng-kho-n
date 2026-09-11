@@ -60,11 +60,24 @@ def ohlcv_payload(
             f"Chưa có dữ liệu giá khung {tf.label} cho mã {symbol.upper()}", "NO_PRICE_DATA"
         )
 
-    return _payload(symbol, tf, [CandleOut.model_validate(c) for c in candles])
+    # Cây cuối có phải nến đang hình thành hay không. Giao diện cần biết để vẽ nó khác đi — một
+    # cây nến chưa đóng trông y hệt một cây đã chốt là cách chắc chắn để ai đó đọc mức đóng cửa
+    # của 10:37 như thể phiên đã kết thúc ở đó.
+    base = market_data.timeframes.base_of(tf.code)
+    live = market_data.bars.live_candle(symbol.strip().upper(), base) if before is None else None
+    partial = bool(live and candles and candles[-1].trade_date == live.trade_date)
+
+    return _payload(
+        symbol, tf, [CandleOut.model_validate(c) for c in candles], partial=partial
+    )
 
 
-def _payload(symbol: str, tf: Timeframe, candles: list[CandleOut]) -> dict:
+def _payload(
+    symbol: str, tf: Timeframe, candles: list[CandleOut], *, partial: bool = False
+) -> dict:
     return {
+        #: Cây nến cuối chuỗi chưa đóng — dựng từ giá đang chạy, không có trong cơ sở dữ liệu.
+        "partial": partial,
         "symbol": symbol.upper(),
         # Tên khoá cũ, giá trị mới. Giữ `resolution` để mọi thứ đang đọc nó không gãy.
         "resolution": tf.code,

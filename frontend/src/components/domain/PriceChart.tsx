@@ -636,8 +636,35 @@ export function PriceChart({
 
   // Khi nạp thêm lịch sử, giữ nguyên vùng người dùng đang nhìn thay vì nhảy về đầu.
   const previousCount = useRef(0);
+
+  /** Dấu của chuỗi đã vẽ — xem nhánh `tailOnly` ngay dưới. */
+  const appliedRef = useRef<{ epoch: number; key: string; first?: Time; last?: Time }>({
+    epoch: -1,
+    key: '',
+  });
+
   useEffect(() => {
     if (!priceRef.current) return;
+
+    /* Nhịp giá đang chạy chỉ sửa **cây nến cuối**: vẫn mã ấy, khung ấy, số nến ấy, mốc đầu và
+       mốc cuối ấy. Đi tiếp xuống `setData` thì nhánh `!grew` gọi `applyRange` và vùng nhìn bị
+       kéo về khoảng mặc định — hai giây một lần, đúng lúc người dùng đang phóng to một đoạn quá
+       khứ để soi. `update` chỉ chạm cây cuối và không đụng tới vùng nhìn. */
+    const applied = appliedRef.current;
+    const tailOnly =
+      bars.length > 0 &&
+      bars.length === previousCount.current &&
+      applied.epoch === epoch &&
+      applied.key === seriesKey &&
+      applied.first === bars[0].time &&
+      applied.last === bars[bars.length - 1].time;
+
+    if (tailOnly) {
+      priceRef.current.update(bars[bars.length - 1]);
+      const volume = volumes.at(-1);
+      if (volume) volumeRef.current?.update(volume);
+      return;
+    }
 
     const grew = bars.length > previousCount.current && previousCount.current > 0;
     const savedRange = grew ? chartRef.current?.timeScale().getVisibleLogicalRange() : null;
@@ -657,7 +684,13 @@ export function PriceChart({
     }
 
     previousCount.current = bars.length;
-  }, [bars, volumes, applyRange, epoch]);
+    appliedRef.current = {
+      epoch,
+      key: seriesKey,
+      first: bars[0]?.time,
+      last: bars.at(-1)?.time,
+    };
+  }, [bars, volumes, applyRange, epoch, seriesKey]);
 
   /* ── Đường của chỉ báo vẽ đè ───────────────────────────────────────────── */
 

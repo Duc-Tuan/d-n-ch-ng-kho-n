@@ -169,6 +169,46 @@ class Settings(BaseSettings):
     #: 0=chủ nhật), nên `1-5` sẽ thành thứ 3 đến thứ 7 — chạy thừa thứ 7 và bỏ mất thứ 2.
     job_sync_market_cron: str = "0 16 * * mon-fri"
 
+    #: Đồng bộ nến trong ngày **thêm** vài lượt giữa phiên, tính bằng phút. 0 là tắt.
+    #:
+    #: Không phải để biểu đồ mượt hơn — mà vì `job_sync_market` tự cảnh báo trong docstring của
+    #: nó: nguồn chỉ phục vụ một cửa sổ trượt vài trăm nến, khung 1 phút chỉ có ~4 phiên đệm, và
+    #: "bỏ lỡ là mất hẳn". Chạy một lượt duy nhất lúc 16:00 nghĩa là một điểm hỏng duy nhất cho
+    #: thứ không có đường nào lấy lại. 20 lượt mỗi phiên là 20 lưới an toàn cho nhau.
+    market_intraday_sync_minutes: int = 15
+
+    # ---------- Giá thời gian thực cho bảng giá (BR-830, BR-831) ----------
+    #: Cờ tắt/bật cả tính năng. Mặc định tắt: bật sau khi đã chạy thử đối chiếu một phiên.
+    market_realtime_enabled: bool = False
+
+    #: BR-830 — đổi nguồn giá chạy chỉ cần đổi giá trị này. Xem `market_data.quotes`.
+    market_realtime_provider: str = "VPS"
+
+    #: Nhịp lấy giá, tính bằng giây. Đo ngày 10/09/2026: một lời gọi cho 150 mã mất 66–81 ms và
+    #: cho cả 1.523 mã của ba sàn mất 226 ms — nhịp 2 giây là dư sức. Đặt thấp hơn không làm
+    #: bảng giá "thật" hơn với mắt người, chỉ tốn băng thông và tăng rủi ro bị chặn IP.
+    market_realtime_interval_seconds: int = 2
+
+    #: Quá mốc này mà không có nhịp thành công nào thì bảng giá lùi về dữ liệu cuối phiên và nói
+    #: rõ là đang chậm. Rộng hơn nhịp poll nhiều lần để một nhịp lỡ không làm nhấp nháy nhãn.
+    market_realtime_stale_seconds: int = 30
+
+    #: Cửa sổ poll theo giờ Việt Nam. Ngoài cửa sổ, và trong ngày nghỉ theo `trading_calendar`,
+    #: bộ poll thoát ngay không gọi mạng lần nào.
+    market_realtime_session_start: str = "08:45"
+    market_realtime_session_end: str = "15:15"
+
+    #: Trần số mã một kết nối WebSocket được đăng ký. Chặn một client kéo cả sàn về qua kênh đẩy
+    #: trong khi bảng giá trên màn hình chỉ có vài chục dòng.
+    market_realtime_max_symbols: int = 200
+
+    #: Chu kỳ tự chạy "Đồng bộ tất cả", tính bằng giờ. 0 là tắt — chỉ chạy khi bấm nút.
+    #:
+    #: Đây chỉ là giá trị dự phòng: chu kỳ đang có hiệu lực nằm ở cấu hình
+    #: `market_fullsync_interval_hours` sửa được trên giao diện, và
+    #: `scheduler.reschedule_market_fullsync()` áp ngay khi lưu, giống hệt `news_sync_time`.
+    job_market_fullsync_interval_hours: int = 0
+
     # ---------- Tin tức dẫn nguồn ----------
     #: Giờ kéo tin mặc định. Đây chỉ là giá trị dự phòng: giờ đang có hiệu lực nằm ở cấu hình
     #: `news_sync_time` sửa được trên giao diện, và `scheduler.reschedule_news_sync()` áp ngay

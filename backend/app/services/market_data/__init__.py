@@ -9,7 +9,7 @@ from app.services.market_data.base import (
     MarketDataProvider,
     SymbolInfo,
 )
-from app.services.market_data import bars, fullsync, timeframes
+from app.services.market_data import bars, fullsync, quote_store, quotes, timeframes
 from app.services.market_data.bars import (
     Candle,
     read_bars,
@@ -53,5 +53,7 @@ __all__ = [
     "bars",
     "providers",
     "fullsync",
+    "quotes",
+    "quote_store",
     "timeframes",
 ]

@@ -86,6 +86,24 @@ def update_settings(
         if next_run:
             message += f". Lượt kéo tin kế tiếp: {to_local(datetime.fromisoformat(next_run)):%H:%M %d/%m}"
 
+    if "market_fullsync_interval_hours" in changed:
+        # Cùng lý do như trên: chu kỳ mới phải có hiệu lực ngay. Và phải nói lại mốc chạy kế
+        # tiếp — một chu kỳ đặt xong mà không thấy gì xác nhận thì người vận hành sẽ ngồi đợi
+        # một mẻ có thể không bao giờ được cắm.
+        from app.jobs import scheduler as job_scheduler
+
+        state = job_scheduler.reschedule_market_fullsync()
+        if not state["enabled"]:
+            message += ". Đã tắt tự đồng bộ toàn bộ nến"
+            if state.get("reason"):
+                message += f" ({state['reason']})"
+        elif state["next_run"]:
+            nxt = to_local(datetime.fromisoformat(state["next_run"]))
+            message += (
+                f". Đồng bộ toàn bộ nến mỗi {state['interval_hours']} giờ, "
+                f"mẻ kế tiếp {nxt:%H:%M %d/%m}"
+            )
+
     return Message(message=message)
 
 

@@ -2,12 +2,31 @@
 
 const VND = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 });
 const DECIMAL = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 });
+const PRICE = new Intl.NumberFormat('vi-VN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** 1.500.000.000 */
 export function formatNumber(value: number | string | null | undefined, fallback = '—'): string {
   if (value === null || value === undefined || value === '') return fallback;
   const n = typeof value === 'string' ? Number(value) : value;
   return Number.isFinite(n) ? VND.format(n) : fallback;
+}
+
+/**
+ * Giá cổ phiếu — 7,31 · 21,95 · 123,50.
+ *
+ * Tách khỏi `formatNumber` vì hai loại số này cần hai cách làm tròn ngược nhau. Khối lượng là
+ * số cổ phiếu nên phần thập phân vô nghĩa; giá thì đơn vị là **nghìn đồng**, nên chữ số thập
+ * phân thứ hai chính là bước giá 10 đồng của HOSE. Đưa giá qua `formatNumber` là làm tròn về
+ * số chẵn: 7,31 hiện thành "7" — sai 10 đồng trên mỗi cổ phiếu và mất luôn mọi chuyển động
+ * trong phiên của những mã dưới 10.000 đồng.
+ *
+ * Luôn hai chữ số thập phân, kể cả khi là số 0: cột giá canh phải với `tabular-nums`, số lúc
+ * hai chữ lúc không sẽ làm dấu phẩy nhảy qua nhảy lại giữa các dòng.
+ */
+export function formatPrice(value: number | string | null | undefined, fallback = '—'): string {
+  if (value === null || value === undefined || value === '') return fallback;
+  const n = typeof value === 'string' ? Number(value) : value;
+  return Number.isFinite(n) ? PRICE.format(n) : fallback;
 }
 
 /** 1.500.000.000 ₫ */

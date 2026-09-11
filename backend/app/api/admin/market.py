@@ -565,8 +565,61 @@ def full_sync_progress(staff: CanView) -> dict:
     """Tiến độ mẻ đồng bộ toàn danh mục — mã đang tải, số đã xong, lỗi gần đây, ước tính còn lại.
 
     Chỉ đọc bộ nhớ tiến trình nên gọi vài giây một lần cũng không chạm tới cơ sở dữ liệu.
+
+    Kèm luôn `schedule`: chu kỳ tự chạy và mốc chạy kế tiếp. Người vận hành mở màn này để xem
+    "đã đồng bộ tới đâu" thì câu hỏi ngay sau đó luôn là "bao giờ chạy lại" — bắt họ mở sang màn
+    Cấu hình để biết là chia một câu hỏi thành hai màn hình.
     """
-    return market_data.fullsync.snapshot()
+    from app.jobs import scheduler as job_scheduler
+
+    snapshot = market_data.fullsync.snapshot()
+    try:
+        snapshot["schedule"] = job_scheduler.market_fullsync_status()
+    except Exception:  # noqa: BLE001 — thiếu lịch không được che mất tiến độ đang chạy
+        snapshot["schedule"] = {"enabled": False, "interval_hours": 0, "next_run": None,
+                                "scheduler_running": False}
+    return snapshot
+
+
+# ----------------------------------------------------------------------
+# Giá thời gian thực — BR-831
+# ----------------------------------------------------------------------
+@router.get("/realtime", response_model=dict)
+def realtime_status(staff: CanView) -> dict:
+    """Trạng thái bộ lấy giá: nhịp gần nhất, độ trễ, số mã trong kho, lỗi liên tiếp.
+
+    Lý do màn này tồn tại giống hệt lý do `SymbolTimeframeSync.last_error` tồn tại: một nguồn im
+    lặng ngừng trả dữ liệu và một nguồn đang chạy bình thường trông **y hệt nhau** trên bảng giá
+    — số cũ vẫn nằm đó, chỉ là không đổi nữa. Đó là kiểu hỏng nguy hiểm nhất của phần dữ liệu, và
+    không có màn hình nào khác lộ ra được.
+    """
+    from app.services.market_data import quote_store
+    from app.services.realtime import market_registry
+
+    status = quote_store.store.status()
+    status["session_label"] = quote_store.SESSION_LABELS.get(status["session"], status["session"])
+    status["subscribers"] = market_registry.count
+    status["subscribed_symbols"] = len(market_registry.subscribed_symbols)
+    status["window"] = {
+        "start": settings.market_realtime_session_start,
+        "end": settings.market_realtime_session_end,
+    }
+    status["intraday_sync_minutes"] = settings.market_intraday_sync_minutes
+    return status
+
+
+@router.post("/realtime/poll", response_model=dict)
+def realtime_poll_now(staff: CanRun) -> dict:
+    """Chạy một nhịp lấy giá ngay, bỏ qua cửa sổ phiên.
+
+    Để kiểm chứng nguồn còn sống mà không phải đợi tới phiên sau — thứ duy nhất trả lời được
+    câu "nguồn hỏng hay đang ngoài giờ" bằng một cái bấm nút.
+    """
+    from app.services.market_data import quote_store
+
+    result = quote_store.poll_once(force=True)
+    result["status"] = quote_store.store.status()
+    return result
 
 
 @router.post("/sync-all/stop", response_model=dict)

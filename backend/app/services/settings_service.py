@@ -98,6 +98,14 @@ SETTING_DEFS: tuple[SettingDef, ...] = (
         env_attr="job_sync_news_time",
     ),
     SettingDef(
+        "market_fullsync_interval_hours", "Chu kỳ đồng bộ toàn bộ nến (giờ)", "market",
+        "Số giờ giữa hai lần tự chạy mẻ \"Đồng bộ tất cả\". Để 0 là tắt — chỉ chạy khi bấm nút. "
+        "Nhận từ 1 đến 336 giờ (14 ngày). Đổi chu kỳ có hiệu lực ngay, không cần khởi động lại. "
+        "Một mẻ toàn danh mục chạy hàng chục phút; đặt chu kỳ ngắn hơn thời gian chạy thì mẻ sau "
+        "luôn gặp mẻ trước còn dở và bị bỏ qua. Theo dõi tiến độ ở màn Dữ liệu thị trường.",
+        value_type="number", env_attr="job_market_fullsync_interval_hours",
+    ),
+    SettingDef(
         "smtp_host", "Máy chủ SMTP", "email", env_attr="smtp_host",
     ),
     SettingDef(
@@ -121,6 +129,7 @@ GROUP_LABELS = {
     "compliance": "Điều kiện duy trì tài khoản",
     "telegram": "Telegram",
     "news": "Tin tức dẫn nguồn",
+    "market": "Dữ liệu thị trường",
     "email": "Gửi email (SMTP)",
 }
 

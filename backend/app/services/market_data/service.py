@@ -17,6 +17,7 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.datetime_utils import local_today, utcnow
 from app.core.exceptions import NotFound, ValidationError
 from app.models.market import MarketSyncLog, OhlcvDaily, Symbol
@@ -545,9 +546,16 @@ def list_symbol_codes(db: Session, exchange: str | None = None) -> list[str]:
 def get_price_board(
     db: Session, symbols: list[str] | None = None, exchange: str | None = None, limit: int = 50
 ) -> list[dict]:
-    """Bảng giá: phiên gần nhất và phiên liền trước để tính thay đổi.
+    """Bảng giá: phiên gần nhất, phủ giá thời gian thực lên nếu kho còn tươi.
 
-    Không phải giá realtime — mục 12.1 chấp nhận độ trễ cuối ngày ở giai đoạn này.
+    Hai tầng, cố ý theo đúng thứ tự này:
+
+    1. Đọc `ohlcv_daily` như trước — đây vẫn là đường đi bảo đảm luôn có kết quả.
+    2. Phủ ảnh chụp từ `quote_store` lên những mã có giá đang chạy.
+
+    Kho rỗng, kho ôi, hay tính năng bị tắt thì bước 2 không làm gì và hành vi giống hệt trước
+    khi có real-time. Đó là điều kiện để bật/tắt `MARKET_REALTIME_ENABLED` giữa phiên mà không
+    ai phải sửa gì.
     """
     symbol_stmt = select(Symbol).where(Symbol.is_active.is_(True))
     if symbols:
@@ -600,7 +608,58 @@ def get_price_board(
                 "has_data": current is not None,
             }
         )
+
+    _overlay_quotes(board)
     return board
+
+
+def _overlay_quotes(board: list[dict]) -> None:
+    """Phủ giá đang chạy lên các dòng bảng giá, tại chỗ.
+
+    Chỉ phủ những trường **thực sự có** trong ảnh chụp. Mã chưa khớp lệnh nào trong phiên có
+    `price` rỗng, và ghi đè bằng rỗng thì dòng đó đang từ có dữ liệu thành trống — tệ hơn hẳn
+    việc hiện giá cuối phiên trước.
+    """
+    from app.services.market_data import quote_store
+
+    if not settings.market_realtime_enabled or quote_store.store.is_stale():
+        return
+
+    quotes = quote_store.store.get_many([row["symbol"] for row in board])
+    if not quotes:
+        return
+
+    for row in board:
+        quote = quotes.get(row["symbol"])
+        if quote is None or quote.price is None:
+            continue
+
+        row["close"] = quote.price
+        row["change"] = quote.change
+        row["change_pct"] = quote.change_pct
+        row["realtime"] = True
+        row["has_data"] = True
+        # Giá tham chiếu của sở chính xác hơn "giá đóng cửa phiên trước" mình tự suy ra: hai con
+        # số này lệch nhau đúng vào ngày giao dịch không hưởng quyền, và đó cũng là ngày mà cột
+        # thay đổi giá sai thì dễ bị hiểu thành tin xấu của doanh nghiệp.
+        if quote.reference is not None:
+            row["reference"] = quote.reference
+        for field, value in (
+            ("open", quote.open), ("high", quote.high), ("low", quote.low),
+            ("ceiling", quote.ceiling), ("floor", quote.floor),
+            ("avg_price", quote.avg_price), ("value", quote.value),
+        ):
+            if value is not None:
+                row[field] = value
+        if quote.volume:
+            row["volume"] = quote.volume
+        row["bids"] = [{"price": b.price, "volume": b.volume} for b in quote.bids]
+        row["asks"] = [{"price": a.price, "volume": a.volume} for a in quote.asks]
+        row["foreign_buy"] = quote.foreign_buy
+        row["foreign_sell"] = quote.foreign_sell
+        row["foreign_room"] = quote.foreign_room
+        row["at_ceiling"] = quote.at_ceiling
+        row["at_floor"] = quote.at_floor
 
 
 def coverage_stats(db: Session) -> dict:

@@ -135,3 +135,69 @@ def test_khong_co_vong_lap_thi_bo_qua_im_lang(monkeypatch):
 
     realtime.broadcast_public_event({"type": "content"})  # không được ném lỗi
     assert websocket.sent == []
+
+
+# ======================================================================
+# Kênh giá — BR-831
+#
+# Kênh này khác hai kênh trên ở chỗ nó lọc theo **mã đã đăng ký** chứ không theo `principal_id`.
+# Lọc hỏng ở đây không lộ dữ liệu riêng của ai (giá là công khai), nhưng nó phá đúng cái lý do
+# kênh tồn tại: đẩy cả bảng cho mọi kết nối mỗi 2 giây là 143 KB nhân số người đang mở trang.
+# ======================================================================
+def _connect_market(symbols: set[str]) -> FakeWebSocket:
+    websocket = FakeWebSocket()
+    realtime.market_registry.add(
+        realtime.MarketConnection(websocket=websocket, symbols=symbols)  # type: ignore[arg-type]
+    )
+    return websocket
+
+
+@pytest.fixture(autouse=True)
+def _clean_market_registry():
+    yield
+    for connection in realtime.market_registry.connections:
+        realtime.market_registry.remove(connection.websocket)
+
+
+def test_chi_nhan_ma_da_dang_ky():
+    """Người đang xem HOSE không phải nhận giá của cả UPCOM."""
+
+    async def scenario() -> tuple[FakeWebSocket, FakeWebSocket]:
+        watcher = _connect_market({"HPG", "FPT"})
+        other = _connect_market({"VNM"})
+        realtime.broadcast_quotes([
+            {"symbol": "HPG", "price": 21.95},
+            {"symbol": "SSI", "price": 21.1},
+        ])
+        await asyncio.sleep(0.05)
+        return watcher, other
+
+    watcher, other = _run(scenario)
+    assert len(watcher.sent) == 1
+    assert [q["symbol"] for q in watcher.sent[0]["quotes"]] == ["HPG"]
+    assert other.sent == [], "mã không đăng ký thì không được đẩy"
+
+
+def test_khong_dang_ky_ma_nao_thi_khong_nhan_gi():
+    """Kết nối vừa mở, chưa gửi lệnh `subscribe` — không được nhận cả bảng."""
+
+    async def scenario() -> FakeWebSocket:
+        idle = _connect_market(set())
+        realtime.broadcast_quotes([{"symbol": "HPG", "price": 21.95}])
+        await asyncio.sleep(0.05)
+        return idle
+
+    assert _run(scenario).sent == []
+
+
+def test_khong_co_ma_nao_doi_thi_khong_gui_goi_rong():
+    """Bộ poll đã lọc phần đổi; ở đây lọc tiếp theo mã đang xem. Không còn gì thì im lặng."""
+
+    async def scenario() -> FakeWebSocket:
+        watcher = _connect_market({"HPG"})
+        realtime.broadcast_quotes([])
+        realtime.broadcast_quotes([{"symbol": "VNM", "price": 61.5}])
+        await asyncio.sleep(0.05)
+        return watcher
+
+    assert _run(scenario).sent == []

@@ -459,6 +459,14 @@ export type OhlcvResponse = {
    */
   tz_offset_seconds: number;
   candles: Candle[];
+  /**
+   * Cay nen cuoi chuoi **chua dong** - dung tu gia dang chay, khong co trong co so du lieu.
+   *
+   * Nen ngay thi chinh xac tuyet doi (nha cung cap tra san so luy ke ca phien); nen trong ngay
+   * la xap xi vi dinh/day lay tu cac mau cach nhau vai giay. Ca hai deu duoc thay bang nen that
+   * o luot dong bo ke tiep.
+   */
+  partial: boolean;
   /** BR-836 — ghi nguồn dữ liệu dưới bảng giá và biểu đồ. */
   attribution: string;
 };
@@ -477,13 +485,41 @@ export type PriceBoardItem = {
   change: number | null;
   change_pct: number | null;
   has_data: boolean;
+
+  // ---- Gia thoi gian thuc (BR-831). Chi them truong, moi truong tren giu nguyen ten: bang gia
+  // phai chay y nhu cu khi may chu tat co real-time, va khi do moi truong duoi day deu rong.
+  /** Dong nay dang mang gia dang chay hay gia cuoi phien. */
+  realtime: boolean;
+  ceiling: number | null;
+  floor: number | null;
+  avg_price: number | null;
+  /** Gia tri giao dich, don vi nghin dong. */
+  value: number | null;
+  bids: { price: number; volume: number }[];
+  asks: { price: number; volume: number }[];
+  foreign_buy: number | null;
+  foreign_sell: number | null;
+  foreign_room: number | null;
+  /** Quy uoc mau Viet Nam: tim la gia tran, xanh lam la gia san. */
+  at_ceiling: boolean;
+  at_floor: boolean;
 };
 
 export type PriceBoardResponse = {
   items: PriceBoardItem[];
   exchange: string;
   attribution: string;
+  /** Ca bang dang chay real-time hay khong. */
   realtime: boolean;
+  /** Tinh nang co bat hay khong - giao dien dua vao co nay de quyet dinh mo kenh WebSocket. */
+  realtime_enabled: boolean;
+  /** Moc anh chup gan nhat - rong khi dang dung du lieu cuoi phien. */
+  as_of: string | null;
+  /** Ma phien: ATO / LO / BREAK / ATC / PT / CLOSED. */
+  session: string;
+  session_label: string;
+  /** Kho gia da qua han - bang dang hien du lieu cuoi phien. */
+  stale: boolean;
   note: string;
 };
 

@@ -68,6 +68,88 @@ def reschedule_news_sync() -> str | None:
     return job.next_run_time.isoformat() if job and job.next_run_time else None
 
 
+#: Id job chạy mẻ "Đồng bộ tất cả" theo chu kỳ. Đặt tên rõ ràng vì `reschedule_market_fullsync`
+#: phải tìm lại đúng job này để gỡ hoặc đổi chu kỳ.
+MARKET_FULLSYNC_JOB = "market_fullsync"
+
+#: Chu kỳ cho phép đặt, tính bằng giờ. Dưới 1 giờ là vô nghĩa — một mẻ toàn danh mục chạy hàng
+#: chục phút, đặt 30 phút thì mẻ sau luôn gặp mẻ trước còn đang chạy và bị bỏ qua.
+FULLSYNC_MIN_HOURS = 1
+FULLSYNC_MAX_HOURS = 24 * 14
+
+
+def fullsync_interval_hours() -> int:
+    """Chu kỳ tự đồng bộ toàn bộ nến, đọc từ bảng cấu hình chứ không phải từ `.env`.
+
+    Cùng khuôn với `news_sync_trigger`: người vận hành sửa ở màn Cấu hình hệ thống,
+    `reschedule_market_fullsync()` áp ngay, không phải khởi động lại backend. 0 nghĩa là tắt —
+    chỉ chạy khi bấm nút.
+    """
+    from app.core.database import session_scope
+    from app.services.settings_service import get_setting
+
+    raw = settings.job_market_fullsync_interval_hours
+    try:
+        with session_scope() as db:
+            raw = get_setting(db, "market_fullsync_interval_hours") or raw
+    except Exception:
+        log.warning("Không đọc được chu kỳ đồng bộ toàn bộ, dùng %s giờ", raw)
+
+    try:
+        hours = int(str(raw).strip() or 0)
+    except (TypeError, ValueError):
+        log.warning("Chu kỳ đồng bộ toàn bộ không hợp lệ (%r), coi như tắt", raw)
+        return 0
+
+    if hours <= 0:
+        return 0
+    return max(FULLSYNC_MIN_HOURS, min(hours, FULLSYNC_MAX_HOURS))
+
+
+def reschedule_market_fullsync() -> dict:
+    """Áp chu kỳ mới. Trả về trạng thái để hiện lại ngay cho người vừa bấm lưu."""
+    if not _scheduler:
+        return {"enabled": False, "interval_hours": 0, "next_run": None,
+                "reason": "Scheduler đang tắt (ENABLE_SCHEDULER=false)"}
+
+    hours = fullsync_interval_hours()
+    existing = _scheduler.get_job(MARKET_FULLSYNC_JOB)
+
+    if hours <= 0:
+        if existing:
+            _scheduler.remove_job(MARKET_FULLSYNC_JOB)
+        return {"enabled": False, "interval_hours": 0, "next_run": None}
+
+    _scheduler.add_job(
+        tasks.job_market_fullsync,
+        trigger=IntervalTrigger(hours=hours),
+        id=MARKET_FULLSYNC_JOB,
+        replace_existing=True,
+        max_instances=1,
+        # Mẻ chạy hàng chục phút. Bỏ lỡ vì backend tắt thì chạy bù ở lần khởi động sau là đúng,
+        # nhưng đừng chạy bù một mẻ đã quá hạn cả ngày — chu kỳ tiếp theo cũng sắp tới rồi.
+        misfire_grace_time=3600,
+    )
+    job = _scheduler.get_job(MARKET_FULLSYNC_JOB)
+    return {
+        "enabled": True,
+        "interval_hours": hours,
+        "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+    }
+
+
+def market_fullsync_status() -> dict:
+    """Lịch hiện tại của mẻ đồng bộ tự động — cho màn quản trị hiện "lần chạy kế tiếp"."""
+    hours = fullsync_interval_hours()
+    job = _scheduler.get_job(MARKET_FULLSYNC_JOB) if _scheduler else None
+    return {
+        "enabled": bool(job) and hours > 0,
+        "interval_hours": hours,
+        "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+        "scheduler_running": bool(_scheduler and _scheduler.running),
+    }
+
+
 def start_scheduler() -> BackgroundScheduler | None:
     global _scheduler
     if not settings.enable_scheduler:
@@ -130,6 +212,35 @@ def start_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=3600,
     )
 
+    # BR-831 — bộ lấy giá cho bảng giá. Nhịp dày nhất trong cả scheduler, nên `max_instances=1`
+    # là bắt buộc: nhịp đầu tiên của phiên tốn 30–40 giây cho bắt tay TLS, và nếu cho chồng nhau
+    # thì trong chừng ấy giây sẽ có hàng chục nhịp cùng gọi một endpoint.
+    #
+    # Bản thân job tự thoát ngay khi tính năng tắt, ngoài cửa sổ phiên, hoặc ngày nghỉ — rẻ hơn
+    # nhiều so với gỡ và cắm lại job mỗi lần đổi cấu hình.
+    scheduler.add_job(
+        tasks.job_poll_quotes,
+        trigger=IntervalTrigger(seconds=max(1, settings.market_realtime_interval_seconds)),
+        id="quote_poller",
+        replace_existing=True,
+        max_instances=1,
+        # Nhịp lỡ thì bỏ hẳn, không chạy bù: giá của 30 giây trước không còn giá trị gì.
+        coalesce=True,
+        misfire_grace_time=5,
+    )
+
+    # Bù nến trong ngày giữa phiên — xem `tasks.job_sync_intraday`.
+    if settings.market_intraday_sync_minutes > 0:
+        scheduler.add_job(
+            tasks.job_sync_intraday,
+            trigger=IntervalTrigger(minutes=settings.market_intraday_sync_minutes),
+            id="intraday_sync",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+
     # BR-872 — tin tổng hợp cuối phiên.
     digest_time = parse_hhmm(settings.telegram_digest_time)
     scheduler.add_job(
@@ -142,6 +253,17 @@ def start_scheduler() -> BackgroundScheduler | None:
 
     scheduler.start()
     _scheduler = scheduler
+
+    # Cắm sau khi scheduler chạy vì `reschedule_market_fullsync` đọc bảng cấu hình và thao tác
+    # trên `_scheduler` — cùng đường mà nút Lưu ở màn Cấu hình đi, nên chỉ có một cách đăng ký
+    # job này và không thể lệch nhau.
+    try:
+        state = reschedule_market_fullsync()
+        if state["enabled"]:
+            log.info("Đồng bộ toàn bộ nến tự động: mỗi %s giờ", state["interval_hours"])
+    except Exception:
+        log.warning("Không cắm được lịch đồng bộ toàn bộ nến", exc_info=True)
+
     log.info("Scheduler đã khởi động với %s job", len(scheduler.get_jobs()))
     return scheduler
 

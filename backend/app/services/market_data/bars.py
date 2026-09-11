@@ -355,6 +355,67 @@ def aggregate(candles: list[Candle], tf: Timeframe) -> list[Candle]:
     return out
 
 
+def live_candle(symbol: str, base: Timeframe) -> Candle | None:
+    """Cây nến **đang hình thành** của khung gốc, dựng tại chỗ từ kho giá — BR-831.
+
+    Trả về `None` khi tính năng tắt, kho ôi, hoặc mã chưa khớp lệnh nào. Không bao giờ chạm cơ
+    sở dữ liệu và không bao giờ được ghi xuống: nến chốt là việc của `job_sync_market`, xem
+    `OhlcvDaily` (BR-832).
+    """
+    if not settings.market_realtime_enabled:
+        return None
+
+    from app.services.market_data import quote_store
+
+    bar = quote_store.store.live_bar(symbol, base.code)
+    if bar is None:
+        return None
+
+    if base.is_daily:
+        # Cùng quy ước với `_as_candle`: nến ngày neo ở nửa đêm **UTC** của `trade_date`. Lấy
+        # `bucket_start` ở đây sẽ ra 17:00 UTC hôm trước, và `aggregate` xếp cây nến hôm nay vào
+        # ô tuần của tuần trước.
+        trade_date = bar.bucket_start.astimezone(settings.tz).date()
+        ts = datetime.combine(trade_date, datetime.min.time(), tzinfo=timezone.utc)
+    else:
+        ts = bar.bucket_start
+        trade_date = ts.astimezone(settings.tz).date()
+
+    return Candle(
+        time=ts, trade_date=trade_date,
+        open=bar.open, high=bar.high, low=bar.low, close=bar.close, volume=bar.volume,
+    )
+
+
+def _with_live_tail(symbol: str, base: Timeframe, candles: list[Candle]) -> list[Candle]:
+    """Ghép cây nến đang chạy vào cuối chuỗi nến đã lưu.
+
+    Ba trường hợp, và trường hợp giữa mới là cái dễ quên: `sync_bars` giữa phiên có thể đã ghi
+    **đúng ô** đang hình thành. Thêm một cây nữa thì biểu đồ có hai nến cùng mốc thời gian; nên
+    hợp nhất, lấy giá mở đã lưu (chính xác hơn giá lấy mẫu) và biên rộng hơn của hai bên.
+    """
+    live = live_candle(symbol, base)
+    if live is None:
+        return candles
+    if not candles:
+        return [live]
+
+    last = candles[-1]
+    if last.time > live.time:
+        return candles  # người dùng đang cuộn ở quá khứ, đuôi sống không thuộc về đoạn này
+    if last.time == live.time:
+        return candles[:-1] + [Candle(
+            time=last.time,
+            trade_date=last.trade_date,
+            open=last.open,
+            high=max(last.high, live.high),
+            low=min(last.low, live.low),
+            close=live.close,
+            volume=max(last.volume, live.volume),
+        )]
+    return candles + [live]
+
+
 def read_bars(
     db: Session,
     symbol: str,
@@ -380,6 +441,10 @@ def read_bars(
     end = before or (_day_end(date_to) if date_to else None)
     end_exclusive = before is not None
 
+    # Đuôi sống chỉ có nghĩa khi đang hỏi **đoạn mới nhất**. Cuộn ngược về quá khứ (`before`,
+    # `date_to`) thì cây nến của lúc này không thuộc về đoạn người dùng đang xem.
+    want_live = end is None
+
     if tf.derived:
         # Đọc dư một ô: ô cũ nhất gần như luôn bị cắt mất phần đầu, và một cây nến tuần dựng từ
         # hai phiên thay vì năm phiên trông vẫn hoàn toàn bình thường trên biểu đồ.
@@ -388,6 +453,11 @@ def read_bars(
             db, symbol, base, start=start, end=end, limit=need, end_exclusive=end_exclusive
         )
         truncated = len(rows) >= need
+        # Ghép ở **khung gốc**, trước khi gộp. Nhờ vậy 2h/4h (gộp từ 1h) và 1W/1M (gộp từ 1D)
+        # có đuôi sống miễn phí và luôn khớp với khung gốc đang hiển thị — đúng lý lẽ đã ghi
+        # trong `timeframes.py` về việc suy ra thay vì lưu riêng.
+        if want_live:
+            rows = _with_live_tail(symbol, base, rows)
         candles = aggregate(rows, tf)
         # Ô cũ nhất chỉ đáng tin khi ta chắc đã đọc tới đầu chuỗi.
         if truncated and candles:
@@ -415,7 +485,7 @@ def read_bars(
             db, symbol, base, start=start, end=end, limit=limit, end_exclusive=end_exclusive
         )
 
-    return candles
+    return _with_live_tail(symbol, base, candles) if want_live else candles
 
 
 def _may_auto_fetch(db: Session, symbol: str, timeframe: str) -> bool:

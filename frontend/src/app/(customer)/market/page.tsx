@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { MarketAnalysisPanel } from '@/components/domain/MarketAnalysisPanel';
 import { PriceChart } from '@/components/domain/PriceChart';
+import { withLiveQuote } from '@/components/domain/chart/candles';
 import { useIndicators } from '@/components/domain/chart/useIndicators';
 import {
   Card,
@@ -13,12 +14,12 @@ import {
   Spinner,
   Tabs,
 } from '@/components/ui';
-import { useApiQuery } from '@/hooks';
+import { useApiQuery, useFlash, useMarketRealtime } from '@/hooks';
 import { CUSTOMER } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatDate } from '@/lib/datetime';
-import { formatNumber, formatPercent } from '@/lib/format';
-import type { OhlcvResponse, PriceBoardResponse, SymbolInfo } from '@/types';
+import { formatNumber, formatPercent, formatPrice } from '@/lib/format';
+import type { Candle, OhlcvResponse, PriceBoardItem, PriceBoardResponse, SymbolInfo } from '@/types';
 
 const EXCHANGES = [
   { key: 'HOSE', label: 'HOSE' },
@@ -26,10 +27,32 @@ const EXCHANGES = [
   { key: 'UPCOM', label: 'UPCOM' },
 ];
 
-/** Màu theo quy ước thị trường Việt Nam: tăng xanh lá, giảm đỏ, tham chiếu vàng. */
-function priceClass(change: number | null | undefined): string {
+/**
+ * Màu theo quy ước thị trường Việt Nam: **tím trần · xanh lam sàn** · tăng xanh lá · giảm đỏ ·
+ * tham chiếu vàng.
+ *
+ * Trần và sàn phải xét **trước** dấu của thay đổi giá, vì một mã kịch trần cũng là một mã tăng
+ * — xét theo thứ tự ngược lại thì màu tím không bao giờ xuất hiện. Đây là hai màu mà người đọc
+ * bảng giá Việt Nam quét tìm đầu tiên, và trước khi có dữ liệu trần/sàn thì hệ thống không có
+ * cách nào phân biệt được.
+ */
+function priceClass(row: Pick<PriceBoardItem, 'change' | 'at_ceiling' | 'at_floor'>): string {
+  if (row.at_ceiling) return 'text-ceil';
+  if (row.at_floor) return 'text-floor';
+  const change = row.change;
   if (change === null || change === undefined || change === 0) return 'text-ref';
   return change > 0 ? 'text-up' : 'text-down';
+}
+
+/**
+ * Nền nháy một nhịp khi giá vừa đổi.
+ *
+ * Chỉ nháy **ô giá**, không nháy cả dòng: sáu mươi dòng cùng đổi nền liên tục là thứ người dùng
+ * tắt đi chứ không phải thứ họ đọc.
+ */
+function flashClass(direction: 'up' | 'down' | undefined): string {
+  if (!direction) return '';
+  return direction === 'up' ? 'bg-up/20' : 'bg-down/20';
 }
 
 /**
@@ -73,13 +96,77 @@ export default function MarketPage() {
     search.trim().length >= 1
       ? { symbols: (found ?? []).map((s) => s.symbol), limit: 30 }
       : { exchange, limit: 60 },
+    // Đường lùi, không phải đường chính. Kênh WebSocket bên dưới mới là thứ đẩy giá; lượt gọi
+    // lại này chỉ để lấy những trường kênh kia không mang (tên công ty, mã mới thêm vào danh
+    // mục) và để bảng vẫn sống khi kênh rớt. Giữ 2 phút như cũ khi kênh còn chạy; kênh chết thì
+    // rút xuống 15 giây để bảng vẫn nhúc nhích.
     { refreshInterval: 120_000 },
   );
+
+  // Đúng những mã đang hiển thị — không đăng ký cả sàn cho một bảng 60 dòng.
+  const visible = useMemo(
+    () => (board?.items ?? []).map((row) => row.symbol),
+    [board?.items],
+  );
+
+  const { quotes, connected } = useMarketRealtime(
+    visible,
+    Boolean(board?.realtime_enabled) && visible.length > 0,
+  );
+  const flash = useFlash(quotes);
+
+  /**
+   * Bảng giá sau khi phủ giá đang chạy lên.
+   *
+   * Máy chủ đã phủ một lần ở `/market/board`, nhưng ảnh chụp đó già đi ngay khi response rời máy
+   * chủ. Phủ thêm lần nữa ở đây bằng gói tin WebSocket mới nhất là thứ làm bảng giá thật sự
+   * chạy giữa hai lượt gọi API.
+   */
+  const rows = useMemo<PriceBoardItem[]>(() => {
+    const items = board?.items ?? [];
+    if (!Object.keys(quotes).length) return items;
+
+    return items.map((row) => {
+      const quote = quotes[row.symbol];
+      if (!quote || quote.price === null) return row;
+      return {
+        ...row,
+        realtime: true,
+        close: quote.price,
+        change: quote.change,
+        change_pct: quote.change_pct,
+        volume: quote.volume,
+        reference: quote.reference ?? row.reference,
+        ceiling: quote.ceiling,
+        floor: quote.floor,
+        at_ceiling: quote.ceiling !== null && quote.price >= quote.ceiling,
+        at_floor: quote.floor !== null && quote.price <= quote.floor,
+      };
+    });
+  }, [board?.items, quotes]);
 
   const { data: ohlcv, isLoading: chartLoading } = useApiQuery<OhlcvResponse>(
     selected ? `${CUSTOMER}/market/ohlcv` : null,
     { symbol: selected, limit: 400 },
   );
+
+  /**
+   * Nến ngày sau khi phủ giá đang chạy lên cây nến cuối — xem `withLiveQuote`.
+   *
+   * Cùng lý lẽ với `rows` ở trên, và là thứ giữ cho biểu đồ nói cùng một con số với bảng giá:
+   * chuỗi nến chỉ được gọi lại khi đổi mã, nên không có bước phủ này thì mã AAA hiện 7,38 bên
+   * trái và 7,36 trên biểu đồ.
+   *
+   * Phụ thuộc vào **chính gói tin của mã đang chọn** chứ không vào cả `quotes`: kho gói tin đổi
+   * mỗi nhịp vì một mã bất kỳ trong sáu mươi dòng vừa khớp lệnh, và dựng lại chuỗi bốn trăm nến
+   * kèm toàn bộ chỉ báo cho mỗi nhịp ấy là việc thừa.
+   */
+  const liveQuote = quotes[selected];
+  const chartCandles = useMemo<Candle[]>(
+    () => withLiveQuote(ohlcv?.candles ?? [], liveQuote),
+    [ohlcv?.candles, liveQuote],
+  );
+  const lastCandle = chartCandles[chartCandles.length - 1];
 
   return (
     <div className="space-y-5 pb-6">
@@ -109,11 +196,13 @@ export default function MarketPage() {
             <Tabs items={EXCHANGES} active={exchange} onChange={setExchange} />
           )}
 
+          {board?.realtime_enabled && <SessionBar board={board} connected={connected} />}
+
           {isLoading ? (
             <Card>
               <Spinner label="Đang tải bảng giá…" />
             </Card>
-          ) : !board?.items.length ? (
+          ) : !rows.length ? (
             <EmptyState
               title="Không tìm thấy mã nào"
               description="Thử từ khoá khác, ví dụ HPG hoặc Hòa Phát."
@@ -141,7 +230,7 @@ export default function MarketPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-ink-100">
-                    {board.items.map((row) => (
+                    {rows.map((row) => (
                       <tr
                         key={row.symbol}
                         onClick={() => setSelected(row.symbol)}
@@ -163,10 +252,20 @@ export default function MarketPage() {
                         <td
                           className={cn(
                             'px-3 py-2.5 text-right text-[0.9375rem] font-semibold tabular-nums',
-                            priceClass(row.change),
+                            // Nền nháy phải tắt dần chứ không biến mất đột ngột: một mảng màu
+                            // tắt phụt trông như lỗi vẽ, còn tắt dần thì mắt đọc được là "vừa
+                            // có gì đó xảy ra ở dòng này".
+                            'transition-colors duration-500',
+                            priceClass(row),
+                            flashClass(flash[row.symbol]),
                           )}
+                          title={
+                            row.ceiling !== null && row.floor !== null
+                              ? `Trần ${formatPrice(row.ceiling)} · Sàn ${formatPrice(row.floor)}`
+                              : undefined
+                          }
                         >
-                          {row.close !== null ? formatNumber(row.close) : '—'}
+                          {row.close !== null ? formatPrice(row.close) : '—'}
                         </td>
                         <td className="px-3 py-2.5 text-right">
                           {row.change_pct !== null ? (
@@ -180,7 +279,7 @@ export default function MarketPage() {
                             >
                               <span>
                                 {row.change !== null && row.change > 0 ? '+' : ''}
-                                {row.change !== null ? formatNumber(row.change) : ''}
+                                {row.change !== null ? formatPrice(row.change) : ''}
                               </span>
                               <span className="opacity-80">
                                 {formatPercent(row.change_pct, 2)}
@@ -201,7 +300,8 @@ export default function MarketPage() {
             </Card>
           )}
 
-          {/* BR-836 — ghi rõ nguồn dữ liệu dưới bảng giá. */}
+          {/* BR-836 — ghi rõ nguồn dữ liệu dưới bảng giá. BR-833 — kèm khuyến cáo giá tham
+              khảo, vì nguồn là endpoint công khai không có hợp đồng. */}
           {board && (
             <p className="px-1 text-xs text-ink-500">
               {board.attribution} · {board.note}
@@ -219,13 +319,13 @@ export default function MarketPage() {
                   {board?.items.find((i) => i.symbol === selected)?.company_name ?? 'Biểu đồ ngày'}
                 </p>
               </div>
-              {ohlcv?.candles.length ? (
+              {lastCandle ? (
                 <div className="text-right">
                   <p className="text-xl font-semibold tabular-nums text-ink-900">
-                    {formatNumber(ohlcv.candles[ohlcv.candles.length - 1].close)}
+                    {formatPrice(lastCandle.close)}
                   </p>
                   <p className="text-xs text-ink-500">
-                    Phiên {formatDate(ohlcv.candles[ohlcv.candles.length - 1].trade_date)}
+                    Phiên {formatDate(lastCandle.trade_date)}
                   </p>
                 </div>
               ) : null}
@@ -235,7 +335,7 @@ export default function MarketPage() {
               <div className="py-20">
                 <Spinner label="Đang tải biểu đồ…" />
               </div>
-            ) : !ohlcv?.candles.length ? (
+            ) : !chartCandles.length ? (
               <EmptyState
                 title={`Chưa có dữ liệu giá cho ${selected}`}
                 description="Mã này chưa được đồng bộ hoặc chưa phát sinh giao dịch."
@@ -243,10 +343,10 @@ export default function MarketPage() {
             ) : (
               <PriceChart
                 symbol={selected}
-                candles={ohlcv.candles}
-                tzOffsetSeconds={ohlcv.tz_offset_seconds}
+                candles={chartCandles}
+                tzOffsetSeconds={ohlcv?.tz_offset_seconds ?? 0}
                 indicators={indicators}
-                attribution={ohlcv.attribution}
+                attribution={ohlcv?.attribution}
                 height={420}
                 onExpandedChange={setChartExpanded}
                 onSymbolChange={setSelected}
@@ -259,11 +359,11 @@ export default function MarketPage() {
                         dựng khi đang phóng to (xem `PriceChart`), nên nó luôn ở cột hẹp. */}
                     <MarketAnalysisPanel
                       symbol={selected}
-                      candles={ohlcv.candles}
+                      candles={chartCandles}
                       instances={indicators.indicators}
                       dense
                     />
-                    <PriceSummary candles={ohlcv.candles} />
+                    <PriceSummary candles={chartCandles} />
                   </div>
                 }
               />
@@ -271,20 +371,68 @@ export default function MarketPage() {
           </Card>
 
           {/* Đang phóng to thì hai khối này đã nằm ở cột phải của lớp phủ — xem `sidePanel`. */}
-          {ohlcv?.candles.length && !chartExpanded ? (
+          {chartCandles.length > 0 && !chartExpanded ? (
             <>
               <MarketAnalysisPanel
                 symbol={selected}
-                candles={ohlcv.candles}
+                candles={chartCandles}
                 instances={indicators.indicators}
               />
-              <PriceSummary candles={ohlcv.candles} />
+              <PriceSummary candles={chartCandles} />
             </>
           ) : null}
         </div>
       </div>
 
       <Disclaimer />
+    </div>
+  );
+}
+
+/**
+ * Dải trạng thái phiên phía trên bảng giá.
+ *
+ * Ba thông tin, và cả ba đều cần thiết vì thiếu chúng thì **một bảng giá đứng im vì thị trường
+ * đang nghỉ trưa và một bảng giá đứng im vì kết nối đã chết trông y hệt nhau**:
+ *
+ * * Phiên đang ở đâu (ATO · liên tục · nghỉ trưa · ATC · đóng cửa).
+ * * Kênh đẩy còn sống không — chấm xanh nhấp nháy.
+ * * Ảnh chụp gần nhất lúc mấy giờ, hiện rõ khi dữ liệu đã chậm.
+ */
+function SessionBar({
+  board,
+  connected,
+}: {
+  board: PriceBoardResponse;
+  connected: boolean;
+}) {
+  const live = board.realtime && connected;
+  const asOf = board.as_of ? new Date(board.as_of) : null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs">
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className={cn(
+            'inline-block h-1.5 w-1.5 rounded-full',
+            live ? 'animate-pulse bg-up' : board.stale ? 'bg-ref' : 'bg-ink-300',
+          )}
+        />
+        <span className="font-medium text-ink-900">{board.session_label}</span>
+      </span>
+
+      {board.stale ? (
+        <span className="text-ref">
+          Dữ liệu chậm
+          {asOf ? ` — cập nhật lúc ${asOf.toLocaleTimeString('vi-VN')}` : ''}
+        </span>
+      ) : asOf ? (
+        <span className="tabular-nums text-ink-500">{asOf.toLocaleTimeString('vi-VN')}</span>
+      ) : null}
+
+      {!connected && board.realtime_enabled && board.session !== 'CLOSED' && (
+        <span className="text-ink-400">· đang kết nối lại…</span>
+      )}
     </div>
   );
 }
@@ -298,12 +446,12 @@ function PriceSummary({ candles }: { candles: OhlcvResponse['candles'] }) {
   const avgVolume = window.reduce((sum, c) => sum + c.volume, 0) / (window.length || 1);
 
   const items = [
-    { label: 'Mở cửa', value: formatNumber(last.open) },
-    { label: 'Cao nhất phiên', value: formatNumber(last.high) },
-    { label: 'Thấp nhất phiên', value: formatNumber(last.low) },
+    { label: 'Mở cửa', value: formatPrice(last.open) },
+    { label: 'Cao nhất phiên', value: formatPrice(last.high) },
+    { label: 'Thấp nhất phiên', value: formatPrice(last.low) },
     { label: 'Khối lượng', value: formatNumber(last.volume) },
-    { label: 'Cao nhất 1 năm', value: formatNumber(high52) },
-    { label: 'Thấp nhất 1 năm', value: formatNumber(low52) },
+    { label: 'Cao nhất 1 năm', value: formatPrice(high52) },
+    { label: 'Thấp nhất 1 năm', value: formatPrice(low52) },
     { label: 'KL trung bình 1 năm', value: formatNumber(Math.round(avgVolume)) },
     { label: 'Số phiên có dữ liệu', value: formatNumber(candles.length) },
   ];

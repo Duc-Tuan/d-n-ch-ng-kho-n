@@ -13,6 +13,12 @@ export { useTokenRefresh } from './useTokenRefresh';
 export { ToastProvider, useToast } from './useToast';
 export { useRealtime, useNotificationSound, type RealtimeEvent } from './useRealtime';
 export { useContentRealtime } from './useContentRealtime';
+export {
+  useMarketRealtime,
+  useFlash,
+  type Quote,
+  type QuoteLevel,
+} from './useMarketRealtime';
 export { useStrategyRun, useRuleCatalog } from './useStrategyRun';
 
 /**

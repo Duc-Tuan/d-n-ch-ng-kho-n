@@ -120,6 +120,37 @@ type FullSyncProgress = {
   stop_requested: boolean;
   message: string | null;
   errors: Array<{ symbol: string; issue: string }>;
+  /** Lich tu chay - dat o man Cau hinh he thong, ap ngay khong can khoi dong lai. */
+  schedule?: {
+    enabled: boolean;
+    interval_hours: number;
+    next_run: string | null;
+    scheduler_running: boolean;
+  };
+};
+
+/** Trang thai bo lay gia thoi gian thuc - khop `quote_store.store.status()`. */
+type RealtimeStatus = {
+  enabled: boolean;
+  provider: string;
+  interval_seconds: number;
+  quotes: number;
+  symbols_tracked: number;
+  as_of: string | null;
+  stale: boolean;
+  session: string;
+  session_label: string;
+  in_session_window: boolean;
+  last_poll_at: string | null;
+  last_duration_ms: number | null;
+  last_error: string | null;
+  consecutive_errors: number;
+  polls_ok: number;
+  polls_failed: number;
+  subscribers: number;
+  subscribed_symbols: number;
+  intraday_sync_minutes: number;
+  window: { start: string; end: string };
 };
 
 const SYNC_STATE = {
@@ -198,6 +229,7 @@ function OverviewTab({ canRun }: { canRun: boolean }) {
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pt-1">
       <OverviewCards overview={overview} />
+      <RealtimePanel />
       <FullSyncCard canRun={canRun} timeframes={overview?.timeframes ?? []} onDone={refresh} />
       <TimeframeCoverageCard overview={overview} />
       <SyncPanel overview={overview} canRun={canRun} onDone={refresh} />
@@ -618,6 +650,8 @@ function FullSyncCard({
         </div>
       )}
 
+      <ScheduleNote schedule={progress?.schedule} />
+
       <FullSyncProgressView progress={progress} meta={meta} />
 
       <ConfirmDialog
@@ -646,6 +680,169 @@ function FullSyncCard({
           setConfirmFull(false);
         }}
       />
+    </Card>
+  );
+}
+
+/**
+ * Dòng nói về lịch tự chạy.
+ *
+ * Đặt ngay trên thanh tiến độ vì người mở màn này để xem "đã đồng bộ tới đâu" thì câu hỏi kế
+ * tiếp luôn là "bao giờ chạy lại" — bắt họ mở sang màn Cấu hình để biết là chia một câu hỏi
+ * thành hai màn hình.
+ */
+function ScheduleNote({ schedule }: { schedule?: FullSyncProgress['schedule'] }) {
+  if (!schedule) return null;
+
+  if (!schedule.scheduler_running) {
+    return (
+      <p className="rounded-lg border border-dashed border-amber-300 bg-amber-50/50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/20">
+        Scheduler đang tắt (<code>ENABLE_SCHEDULER=false</code>), nên không có mẻ nào tự chạy.
+        Nút đồng bộ ở trên vẫn dùng được bình thường.
+      </p>
+    );
+  }
+
+  if (!schedule.enabled) {
+    return (
+      <p className="rounded-lg border border-dashed border-ink-200 px-3 py-2 text-xs text-ink-500">
+        Chưa bật tự đồng bộ toàn bộ nến — chỉ chạy khi bấm nút. Đặt chu kỳ ở màn{' '}
+        <strong className="text-ink-700">Cấu hình hệ thống → Dữ liệu thị trường</strong>.
+      </p>
+    );
+  }
+
+  return (
+    <p className="rounded-lg border border-line bg-ink-50 px-3 py-2 text-xs text-ink-600">
+      Tự đồng bộ toàn bộ nến mỗi{' '}
+      <strong className="text-ink-900">{schedule.interval_hours} giờ</strong>
+      {schedule.next_run && (
+        <>
+          {' '}· mẻ kế tiếp{' '}
+          <strong className="text-ink-900">{formatDateTime(schedule.next_run)}</strong>
+        </>
+      )}
+      . Đổi chu kỳ ở màn Cấu hình hệ thống.
+    </p>
+  );
+}
+
+/**
+ * Thẻ theo dõi nguồn giá thời gian thực.
+ *
+ * Lý do màn này tồn tại: một nguồn im lặng ngừng trả dữ liệu và một nguồn đang chạy bình thường
+ * trông **y hệt nhau** trên bảng giá — số cũ vẫn nằm đó, chỉ là không đổi nữa. Không có chỗ nào
+ * khác trong hệ thống lộ ra được kiểu hỏng đó.
+ */
+function RealtimePanel() {
+  const toast = useToast();
+  const { can } = useStaffSession();
+
+  const { data, refresh } = useApiQuery<RealtimeStatus>(
+    `${ADMIN}/market/realtime`,
+    undefined,
+    { refreshInterval: 5000 },
+  );
+
+  const poll = useApiMutation<{ status: RealtimeStatus }, void>(() =>
+    api.post<{ status: RealtimeStatus }>(`${ADMIN}/market/realtime/poll`),
+  );
+
+  if (!data) return null;
+
+  const healthy = data.enabled && !data.stale;
+  const tone: 'gray' | 'amber' | 'green' = !data.enabled
+    ? 'gray'
+    : data.stale
+      ? 'amber'
+      : 'green';
+  const label = !data.enabled
+    ? 'Đang tắt'
+    : data.stale
+      ? data.in_session_window
+        ? 'Dữ liệu chậm'
+        : 'Ngoài giờ giao dịch'
+      : 'Đang chạy';
+
+  const stats: Array<[string, string]> = [
+    ['Nguồn', data.provider],
+    ['Nhịp lấy giá', `${data.interval_seconds}s`],
+    ['Mã trong kho', formatNumber(data.quotes)],
+    ['Mã theo dõi', formatNumber(data.symbols_tracked)],
+    ['Độ trễ nhịp cuối', data.last_duration_ms !== null ? `${formatNumber(data.last_duration_ms)} ms` : '—'],
+    ['Nhịp thành công', formatNumber(data.polls_ok)],
+    ['Nhịp lỗi', formatNumber(data.polls_failed)],
+    ['Lỗi liên tiếp', formatNumber(data.consecutive_errors)],
+    ['Bảng giá đang mở', `${formatNumber(data.subscribers)} kết nối`],
+    ['Mã đang được xem', formatNumber(data.subscribed_symbols)],
+    ['Cửa sổ phiên', `${data.window.start}–${data.window.end}`],
+    [
+      'Bù nến trong phiên',
+      data.intraday_sync_minutes > 0 ? `mỗi ${data.intraday_sync_minutes} phút` : 'tắt',
+    ],
+  ];
+
+  return (
+    <Card>
+      <CardHeader
+        title="Giá thời gian thực"
+        description={`${data.session_label} · ảnh chụp gần nhất ${
+          data.as_of ? formatDateTime(data.as_of) : 'chưa có'
+        }`}
+        action={
+          can('sync.run') ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={poll.loading}
+              onClick={async () => {
+                const result = await poll.mutate();
+                if (result) {
+                  toast.success('Đã lấy giá một nhịp');
+                  refresh();
+                }
+              }}
+            >
+              Lấy giá ngay
+            </Button>
+          ) : null
+        }
+      />
+
+      <div className="mb-3 flex items-center gap-2">
+        <Badge tone={tone}>{label}</Badge>
+        {healthy && (
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-green-500" />
+        )}
+      </div>
+
+      {data.last_error && (
+        <Alert tone="warning" className="mb-3">
+          Nhịp gần nhất lỗi: <code className="text-xs">{data.last_error}</code>
+        </Alert>
+      )}
+
+      {!data.enabled && (
+        <Alert tone="info" className="mb-3">
+          Đặt <code>MARKET_REALTIME_ENABLED=true</code> trong <code>backend/.env</code> rồi khởi
+          động lại backend để bật. Tắt thì bảng giá quay về đúng hành vi cũ — giá cuối phiên đọc
+          từ cơ sở dữ liệu.
+        </Alert>
+      )}
+
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-4">
+        {stats.map(([key, value]) => (
+          <div key={key}>
+            <dt className="text-xs text-ink-500">{key}</dt>
+            <dd className="mt-0.5 text-sm font-medium tabular-nums text-ink-900">{value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <p className="mt-3 text-xs text-ink-500">
+        Kho giá sống trong bộ nhớ và <strong>không bao giờ ghi xuống cơ sở dữ liệu</strong>. Nến
+        chốt vẫn chỉ đến từ job 16:00 — xem BR-832.
+      </p>
     </Card>
   );
 }
