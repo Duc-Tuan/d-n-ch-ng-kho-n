@@ -24,10 +24,17 @@ def list_symbols(
     db: DbSession,
     q: str | None = Query(default=None, max_length=50, description="Tìm theo mã hoặc tên công ty"),
     exchange: str | None = Query(default=None, description="HOSE | HNX | UPCOM"),
+    asset_class: str | None = Query(default=None, description="STOCK | DERIVATIVE"),
     limit: int = Query(default=50, ge=1, le=500),
 ) -> list[SymbolOut]:
-    """Tra cứu mã. Dùng cho ô tìm kiếm ở bảng giá và ô chọn mã khi tạo chiến lược."""
-    rows = market_data.search_symbols(db, query=q, exchange=exchange, limit=limit)
+    """Tra cứu mã. Dùng cho ô tìm kiếm ở bảng giá và ô chọn mã khi tạo chiến lược.
+
+    `asset_class` để trống thì tìm trong **cả hai** loại — đó là hành vi đúng cho ô tìm kiếm:
+    người gõ "VN30" muốn thấy hợp đồng phái sinh dù đang đứng ở tab Chứng khoán.
+    """
+    rows = market_data.search_symbols(
+        db, query=q, exchange=exchange, limit=limit, asset_class=asset_class
+    )
     return [SymbolOut.model_validate(r) for r in rows]
 
 
@@ -36,12 +43,13 @@ def list_symbol_codes(
     user: ActiveUser,
     db: DbSession,
     exchange: str | None = Query(default=None, description="HOSE | HNX | UPCOM"),
+    asset_class: str | None = Query(default=None, description="STOCK | DERIVATIVE"),
 ) -> list[str]:
     """Chỉ danh sách mã, không kèm tên doanh nghiệp — cho nút chọn cả sàn hoặc cả danh mục.
 
     Cố ý không có tham số `limit`: xem `market_data.list_symbol_codes`.
     """
-    return market_data.list_symbol_codes(db, exchange=exchange)
+    return market_data.list_symbol_codes(db, exchange=exchange, asset_class=asset_class)
 
 
 @router.get("/board", response_model=dict)
@@ -49,7 +57,8 @@ def price_board(
     user: ActiveUser,
     db: DbSession,
     symbols: list[str] | None = Query(default=None),
-    exchange: str = Query(default="HOSE"),
+    exchange: str | None = Query(default=None, description="HOSE | HNX | UPCOM — để trống là mọi sàn"),
+    asset_class: str = Query(default="STOCK", description="STOCK | DERIVATIVE"),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     """Bảng giá — giá đang chạy khi có, giá cuối phiên khi không.
@@ -57,31 +66,50 @@ def price_board(
     Phần đầu phản hồi nói rõ **dữ liệu đang xem là loại nào**: `realtime`, `as_of`, `session` và
     `stale`. BR-836 — dán nhãn sai nguồn là nói sai với người đọc, và ở đây khoảng cách giữa hai
     loại là khoảng cách giữa "giá lúc này" và "giá hôm qua".
+
+    `exchange` bỏ trống nghĩa là **mọi sàn**, không còn mặc định "HOSE": giao diện giờ mở ở tab
+    Chứng khoán với bộ lọc sàn đặt sẵn ở "Tất cả", và ép một sàn ở phía máy chủ sẽ khiến người
+    dùng thấy mỗi HOSE trong khi nút lọc ghi là tất cả.
     """
-    rows = market_data.get_price_board(db, symbols=symbols, exchange=exchange, limit=limit)
+    normalized_class = (asset_class or "STOCK").upper()
+    rows = market_data.get_price_board(
+        db, symbols=symbols, exchange=exchange, limit=limit, asset_class=normalized_class,
+    )
     status = market_data.quote_store.store.status()
     live = bool(status["enabled"]) and not status["stale"] and any(r.get("realtime") for r in rows)
     session = status["session"]
 
+    # Kho giá đang chạy chỉ có cổ phiếu: endpoint `getliststockdata` của VPS trả mảng rỗng cho
+    # VN30F1M và mọi hợp đồng khác (đã đo trực tiếp). Báo `realtime_enabled=False` ở tab phái
+    # sinh là **cần thiết chứ không phải làm đẹp**: giao diện dùng đúng cờ này để quyết định có
+    # mở kênh WebSocket hay không, và mở kênh cho bốn mã mà nguồn không phục vụ thì bảng giá
+    # ngồi chờ một gói tin không bao giờ tới, kèm chấm xanh "đang chạy" nói sai sự thật.
+    derivative = normalized_class == "DERIVATIVE"
+    realtime_enabled = bool(status["enabled"]) and not derivative
+
     return {
         "items": [PriceBoardItem.model_validate(r) for r in rows],
-        "exchange": exchange.upper(),
+        "exchange": exchange.upper() if exchange else None,
+        "asset_class": normalized_class,
         "attribution": market_data.attribution(),
-        "realtime": live,
+        "realtime": live and not derivative,
         # Tách khỏi `realtime`: cờ trên nói "dữ liệu **đang** chạy", cờ này nói "tính năng có bật
         # hay không". Giao diện cần cờ thứ hai để quyết định có mở kênh WebSocket — lúc mới vào
         # trang thì kho có thể chưa kịp đầy nhịp đầu tiên, và nếu nhìn vào `realtime` thì bảng
         # giá sẽ không bao giờ mở kênh để rồi không bao giờ chạy.
-        "realtime_enabled": bool(status["enabled"]),
-        "as_of": status["as_of"] if live else None,
+        "realtime_enabled": realtime_enabled,
+        "as_of": status["as_of"] if live and not derivative else None,
         "session": session,
         "session_label": market_data.quote_store.SESSION_LABELS.get(session, session),
         "stale": bool(status["stale"]),
         "note": (
             # BR-833 — nguồn là endpoint công khai không có hợp đồng. Người đọc phải biết đây là
             # giá tham khảo trước khi họ dùng nó để quyết định điều gì.
-            "Giá tham khảo, có thể lệch vài giây so với sở. Không dùng để đặt lệnh."
-            if live else "Dữ liệu cuối phiên, không phải giá thời gian thực."
+            "Hợp đồng phái sinh hiện chỉ có giá cuối phiên — nguồn chưa phục vụ giá chạy."
+            if derivative
+            else "Giá tham khảo, có thể lệch vài giây so với sở. Không dùng để đặt lệnh."
+            if live
+            else "Dữ liệu cuối phiên, không phải giá thời gian thực."
         ),
     }
 

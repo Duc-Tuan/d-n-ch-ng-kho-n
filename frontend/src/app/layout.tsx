@@ -48,17 +48,35 @@ export const viewport: Viewport = {
 /**
  * Chọn bảng màu **trước khi trang vẽ lần đầu**.
  *
- * Site khách hàng nền tối, site quản trị nền sáng — hai vùng, một bộ class, khác nhau ở giá trị
- * biến CSS (xem `globals.css`). Phải là script đồng bộ nhúng thẳng vào HTML chứ không phải
- * `useEffect`: hiệu ứng chỉ chạy sau lượt vẽ đầu tiên, và người dùng sẽ thấy một cú chớp trắng
- * toàn màn hình mỗi lần tải trang.
+ * Phải là script đồng bộ nhúng thẳng vào HTML chứ không phải `useEffect`: hiệu ứng chỉ chạy sau
+ * lượt vẽ đầu tiên, và người dùng sẽ thấy một cú chớp trắng toàn màn hình mỗi lần tải trang —
+ * đúng thứ ai cũng gặp khi tự dựng nút đổi nền lần đầu.
  *
- * Đọc từ đường dẫn chứ không từ `localStorage`: đây không phải tùy chọn của người dùng mà
- * là danh tính của hai vùng — BR-000 muốn nhìn một giây là biết mình đang ở đâu.
+ * Script đặt **hai** thuộc tính, vì từ nay có hai trục độc lập (xem `globals.css`):
+ *
+ *   * `data-area` suy từ đường dẫn. Là danh tính của vùng, người dùng không đổi được — BR-000
+ *     muốn nhìn một giây là biết mình đang ở site nào.
+ *   * `data-theme` là **tùy chọn của người dùng** trên site khách hàng, đọc từ `localStorage`
+ *     với đúng khoá mà `hooks/useTheme` ghi. Site quản trị bỏ qua tùy chọn đó và luôn sáng:
+ *     ở đó bảng dữ liệu dày đặc và nhân viên ngồi cả ngày, nền sáng vẫn là lựa chọn đúng và
+ *     không có lý do nghiệp vụ nào để mở ra hai biến thể phải bảo trì.
+ *
+ * Toàn bộ nằm trong `try/catch`: trình duyệt chặn `localStorage` (chế độ riêng tư, cookie bị
+ * khoá) sẽ ném ngay ở dòng đọc, và một ngoại lệ ở `<head>` chặn luôn phần HTML còn lại.
  */
-const THEME_SCRIPT =
-  "try{document.documentElement.dataset.theme=" +
-  "location.pathname.split('/')[1]==='admin'?'light':'dark'}catch(e){}";
+const THEME_SCRIPT = `try{
+var d=document.documentElement;
+var area=location.pathname.split('/')[1]==='admin'?'admin':'customer';
+d.dataset.area=area;
+var t='dark';
+if(area==='admin'){t='light'}
+else{
+  var s=localStorage.getItem('ck.theme');
+  if(s!=='light'&&s!=='dark'&&s!=='system'){s='dark'}
+  t=s==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):s;
+}
+d.dataset.theme=t;
+}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -66,8 +84,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
      * `suppressHydrationWarning` ở đây là **bắt buộc**, không phải để giấu lỗi.
      *
      * Máy chủ dựng ra `data-theme="dark"` vì đó là giá trị viết cứng trong JSX. Script ở `<head>`
-     * chạy ngay lúc trình duyệt đọc tới, tức là **trước khi React hydrate**, và trên mọi đường
-     * dẫn `/admin/*` nó ghi đè thành `light`. React 19 so khớp cả thuộc tính của `<html>`, thấy
+     * chạy ngay lúc trình duyệt đọc tới, tức là **trước khi React hydrate**, và ghi đè nó theo
+     * vùng lẫn theo tùy chọn đã lưu của người dùng. React 19 so khớp cả thuộc tính của `<html>`, thấy
      * lệch, rồi báo "Hydration failed... this tree will be regenerated on the client" — và dựng
      * lại toàn bộ cây từ đầu ở phía trình duyệt.
      *
@@ -82,7 +100,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
      * Cờ này chỉ bỏ qua khác biệt **của chính thẻ `<html>`**, không lan xuống các thẻ con: mọi
      * lệch hydrate thật bên trong trang vẫn báo như thường.
      */
-    <html lang="vi" data-theme="dark" className={inter.variable} suppressHydrationWarning>
+    <html
+      lang="vi"
+      data-theme="dark"
+      data-area="customer"
+      className={inter.variable}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>

@@ -10,7 +10,7 @@ import { IconButton } from '@/components/ui/Button';
 import { ChangePasswordModal } from '@/components/domain/ChangePasswordModal';
 import { NotificationMenu } from '@/components/layout/NotificationMenu';
 import { Brand, UserMenu } from '@/components/layout/UserMenu';
-import { useNotificationSound, useRealtime, useStaffSession, useToast, useThemeArea } from '@/hooks';
+import { useNotificationSound, useRealtime, useStaffSession, useToast, useAdminThemeArea } from '@/hooks';
 import { ADMIN } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -136,7 +136,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   // Site quản trị giữ nền sáng — xem `app/layout.tsx` và `tailwind.config.ts`.
-  useThemeArea('light');
+  useAdminThemeArea();
   const current = activeHref(pathname);
   const router = useRouter();
   const { staff, loading, isAuthenticated, can, logout } = useStaffSession();

@@ -583,6 +583,8 @@ class SymbolOut(ORMModel):
     id: int
     symbol: str
     exchange: str
+    #: `STOCK` | `DERIVATIVE` — xem `models.market.Symbol.asset_class`.
+    asset_class: str = "STOCK"
     company_name: str | None = None
     last_ohlcv_date: date | None = None
 
@@ -631,6 +633,9 @@ class QuoteLevelOut(BaseModel):
 class PriceBoardItem(BaseModel):
     symbol: str
     exchange: str
+    #: `STOCK` | `DERIVATIVE`. Giao diện dùng nó để đổi nhãn cột và bỏ các quy ước chỉ đúng với
+    #: cổ phiếu — hợp đồng phái sinh không có giá trần/sàn theo biên độ như cổ phiếu.
+    asset_class: str = "STOCK"
     company_name: str | None = None
     trade_date: date | None = None
     open: Money | None = None

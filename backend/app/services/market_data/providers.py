@@ -63,6 +63,13 @@ class _UdfProvider(MarketDataProvider):
     #: Header riêng cho lời gọi giá — có nguồn kiểm tra `Referer`/`Origin` mới chịu trả dữ liệu.
     OHLCV_HEADERS: dict[str, str] = {}
 
+    #: Tiền tố của hợp đồng tương lai chỉ số Việt Nam: VN30F1M, VN30F2M, VN30F2512…
+    #:
+    #: Nhận dạng bằng tiền tố chứ không tra bảng `symbols`: tầng provider **không được** chạm
+    #: vào cơ sở dữ liệu — nó là lớp nói chuyện với bên ngoài, và mọi hàm ở đây phải gọi được
+    #: từ một script rời không có phiên DB nào.
+    DERIVATIVE_PREFIX = "VN30F"
+
     SYMBOL_URL = "https://iboard-query.ssi.com.vn/stock/exchange/{exchange}"
     EXCHANGES = ("hose", "hnx", "upcom")
 
@@ -124,6 +131,13 @@ class _UdfProvider(MarketDataProvider):
         return results
 
     # ------------------------------------------------------------------
+    def _is_derivative(self, symbol: str) -> bool:
+        return symbol.strip().upper().startswith(self.DERIVATIVE_PREFIX)
+
+    def ohlcv_url(self, symbol: str) -> str:
+        """Endpoint giá cho một mã. Mặc định một URL cho tất cả; lớp con tách theo loại tài sản."""
+        return self.OHLCV_URL
+
     def _has_data(self, payload: dict, symbol: str, resolution: str) -> bool:
         """Phản hồi có dữ liệu dùng được không. Lớp con đổi cách đọc trạng thái ở đây."""
         status = payload.get("s")
@@ -168,7 +182,7 @@ class _UdfProvider(MarketDataProvider):
 
         try:
             response = client.get(
-                self.OHLCV_URL,
+                self.ohlcv_url(symbol),
                 params=params,
                 headers={**BROWSER_HEADERS, **self.OHLCV_HEADERS},
             )
@@ -288,6 +302,17 @@ class EntradeProvider(_UdfProvider):
     attribution = "Nguồn dữ liệu: Entrade (DNSE), SSI iBoard"
 
     OHLCV_URL = "https://services.entrade.com.vn/chart-api/v2/ohlcs/stock"
+    #: Hợp đồng phái sinh nằm ở một đường dẫn riêng.
+    #:
+    #: Không phải chuyện làm cho đủ: gọi `/ohlcs/stock` với VN30F1M thì Entrade trả
+    #: `{"status":400,"code":"BAD_REQUEST","message":"invalid symbol"}` — nghĩa là mỗi mẻ đồng
+    #: bộ đa khung sẽ sinh một dòng lỗi cho mỗi hợp đồng × mỗi khung, mỗi ngày, và biểu đồ trong
+    #: ngày của tab Phái sinh vĩnh viễn trống. VPS thì cùng một URL cho cả hai loại, nên nó
+    #: không cần bước này.
+    DERIVATIVE_OHLCV_URL = "https://services.entrade.com.vn/chart-api/v2/ohlcs/derivative"
+
+    def ohlcv_url(self, symbol: str) -> str:
+        return self.DERIVATIVE_OHLCV_URL if self._is_derivative(symbol) else self.OHLCV_URL
 
     #: Không có `240`/`W`/`M`, giống hai nguồn kia — các khung đó vẫn gộp lúc đọc.
     supported_resolutions = frozenset({"1", "3", "5", "15", "30", "60", "D"})

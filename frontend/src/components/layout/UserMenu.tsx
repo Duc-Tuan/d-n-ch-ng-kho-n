@@ -29,11 +29,19 @@ export function UserMenu({
   subtitle,
   items,
   align = 'right',
+  footer,
 }: {
   name: string;
   subtitle?: string;
   items: UserMenuItem[];
   align?: 'left' | 'right';
+  /**
+   * Khối tự do ở đáy menu — hiện dùng cho bộ chọn bảng màu của site khách hàng.
+   *
+   * Là một ô riêng chứ không phải thêm một `UserMenuItem`: bảng màu có ba trạng thái nhìn thấy
+   * cùng lúc, còn mọi mục trong danh sách này đều là "bấm rồi đi chỗ khác".
+   */
+  footer?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -52,7 +60,7 @@ export function UserMenu({
           open && 'bg-ink-100',
         )}
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-fg">
+        <span className="brand-mark flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
           {initials(name)}
         </span>
         <span className="hidden min-w-0 text-left sm:block">
@@ -74,7 +82,7 @@ export function UserMenu({
         <div
           role="menu"
           className={cn(
-            'absolute top-[calc(100%+0.375rem)] z-50 w-56 overflow-hidden rounded-xl border border-line bg-surface-raised py-1 shadow-pop animate-slide-up',
+            'absolute top-[calc(100%+0.375rem)] z-50 w-64 overflow-hidden rounded-xl border border-line bg-surface-raised py-1 shadow-pop animate-slide-up',
             align === 'right' ? 'right-0' : 'left-0',
           )}
         >
@@ -123,6 +131,8 @@ export function UserMenu({
               </button>
             );
           })}
+
+          {footer && <div className="mt-1 border-t border-line px-3 pb-1 pt-2.5">{footer}</div>}
         </div>
       )}
     </div>
@@ -161,7 +171,13 @@ export function Brand({
 }) {
   return (
     <Link href={href} className="flex min-w-0 items-center gap-2.5">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold tracking-tight text-primary-fg">
+      {/*
+        `brand-mark` chứ không phải `bg-primary` viết thẳng: ở site khách hàng ô logo là một
+        khối chuyển màu có quầng sáng, còn ở site quản trị nó vẫn là mực đen phẳng tuyệt đối —
+        BR-000 không cho phép một điểm xanh nào lọt sang bên quản trị. Phân nhánh bằng
+        `data-area` trong `globals.css` thay vì thêm một prop phải truyền qua mọi nơi gọi.
+      */}
+      <span className="brand-mark flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-bold tracking-tight">
         CK
       </span>
       {!compact && (

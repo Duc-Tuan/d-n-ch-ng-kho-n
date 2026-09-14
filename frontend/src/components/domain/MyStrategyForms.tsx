@@ -276,7 +276,7 @@ export function ShareStrategyModal({
         </Button>
       }
     >
-      <div className="space-y-5">
+      <div className="space-y-5 pb-6">
         {/* ---------- Chia sẻ đích danh ---------- */}
         <div>
           <p className="mb-2 text-sm font-medium text-ink-700">Chia sẻ cho một khách hàng</p>

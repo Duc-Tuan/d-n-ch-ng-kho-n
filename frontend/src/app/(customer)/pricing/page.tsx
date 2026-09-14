@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Icon,
   Input,
   Modal,
   PageHeader,
@@ -80,7 +81,7 @@ export default function PricingPage() {
       )}
 
       {session?.subscription && (
-        <Card className="bg-ink-100/60">
+        <Card className="border-l-2 border-l-brand bg-ink-50/60">
           <p className="text-sm text-ink-700">
             Gói hiện tại: <strong>{session.subscription.package_name}</strong>, hết hạn{' '}
             <strong>{formatDate(session.subscription.expires_at)}</strong>
@@ -99,67 +100,100 @@ export default function PricingPage() {
           <Spinner label="Đang tải bảng giá…" />
         </div>
       ) : (
-        /* `auto-rows-fr` + `flex-1`: lưới nhận hết phần trống còn lại và các thẻ gói cao bằng
-           nhau, thay vì thẻ ngắn tũn nằm lửng giữa màn hình. */
-        <div className="grid min-h-0 flex-1 auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        /*
+          `auto-rows-fr` để các thẻ cao bằng nhau — nút bấm của mọi gói thẳng hàng dù phần mô tả
+          dài ngắn khác nhau. **Không** `flex-1`: trước đây lưới nhận hết chiều cao còn lại của
+          màn hình, và với ba dòng quyền lợi thì mỗi thẻ có một khoảng trống cao bằng nửa màn
+          hình giữa danh sách và nút. Khoảng thừa để lại cho trang, không nhồi vào thẻ.
+
+          Số cột đếm theo số gói thay vì cố định ba. Với bốn gói, lưới ba cột xuống hàng thành
+          3 + 1: gói được đề xuất — vốn là gói dài nhất, tức gói cuối — rơi xuống một mình ở
+          hàng dưới. Đúng cái thẻ muốn bán lại là cái trông lạc lõng nhất.
+        */
+        <div
+          className={cn(
+            'grid auto-rows-fr gap-4 sm:grid-cols-2',
+            (packages?.length ?? 0) === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3',
+          )}
+        >
           {packages?.map((pkg) => {
             const isCurrent = session?.subscription?.package_code === pkg.code;
             const isUpgrade = pkg.tier > currentTier;
+            /* Gói dài nhất là gói được đề xuất. Một bảng giá mà mọi thẻ trông giống hệt nhau
+               bắt người mua tự so sánh ba cột số rồi tự quyết — phần lớn họ đóng tab. */
+            const featured = pkg.tier === 4;
 
             return (
               <Card
                 key={pkg.id}
                 className={cn(
-                  'flex h-full flex-col',
-                  pkg.tier === 4 && 'border-ink-400 ring-1 ring-ink-200',
+                  'relative flex h-full flex-col',
+                  /* Thẻ được đề xuất nổi lên bằng **ba** dấu hiệu cùng lúc: viền màu thương
+                     hiệu, một quầng sáng cùng tông, và nền loang rất nhạt. Chỉ đổi mỗi viền
+                     thì ở nền tối gần như không thấy gì. */
+                  featured && 'border-brand/60 shadow-[0_0_0_1px_rgb(var(--brand)/0.25),var(--shadow-raised)]',
                 )}
               >
-                {pkg.tier === 4 && (
-                  <span className="mb-2 self-start rounded-full bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-fg">
-                    Tiết kiệm nhất
-                  </span>
-                )}
-                <h3 className="text-base font-semibold text-ink-900">{pkg.name}</h3>
-                <p className="mt-2 text-2xl font-semibold text-ink-900">
-                  {formatCurrency(pkg.price)}
-                </p>
-                <p className="mt-0.5 text-sm text-ink-500">
-                  {pkg.duration_months} tháng sử dụng
-                </p>
-
-                {pkg.description && (
-                  <p className="mt-3 flex-1 text-sm text-ink-600">{pkg.description}</p>
+                {featured && (
+                  <div aria-hidden className="mesh-brand pointer-events-none absolute inset-0 rounded-2xl" />
                 )}
 
-                <ul className="mt-3 space-y-1.5 text-sm text-ink-600">
-                  <li className="flex gap-2">
-                    <span className="text-tone-green-fg">✓</span>
-                    Toàn bộ chức năng phân tích
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-tone-green-fg">✓</span>
-                    {pkg.max_telegram_alerts < 0
-                      ? 'Không giới hạn đăng ký nhận tín hiệu'
-                      : `${pkg.max_telegram_alerts} lượt đăng ký nhận tín hiệu`}
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-tone-green-fg">✓</span>
-                    {pkg.max_ai_questions_per_day} câu hỏi chuyên viên mỗi ngày
-                  </li>
-                </ul>
+                <div className="relative flex h-full flex-col">
+                  {featured && (
+                    <span className="mb-2.5 inline-flex items-center gap-1.5 self-start rounded-full bg-gradient-to-r from-brand to-brand-2 px-2.5 py-1 text-xs font-medium text-white">
+                      <Icon name="sparkles" size={13} />
+                      Tiết kiệm nhất
+                    </span>
+                  )}
 
-                <Button
-                  className="mt-4"
-                  fullWidth
-                  variant={isCurrent ? 'outline' : 'primary'}
-                  disabled={isCurrent}
-                  onClick={() => {
-                    setSelected(pkg);
-                    setAcceptRefund(false);
-                  }}
-                >
-                  {isCurrent ? 'Gói hiện tại' : isUpgrade ? 'Nâng cấp' : 'Gia hạn'}
-                </Button>
+                  <h3 className="text-base font-semibold text-ink-900">{pkg.name}</h3>
+
+                  <p className="mt-2 flex items-baseline gap-1.5">
+                    <span className="text-3xl font-semibold tabular-nums tracking-tight text-ink-900">
+                      {formatCurrency(pkg.price)}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-sm text-ink-500">{pkg.duration_months} tháng sử dụng</p>
+
+                  {pkg.description && (
+                    <p className="mt-3 text-sm leading-relaxed text-ink-600">{pkg.description}</p>
+                  )}
+
+                  {/* `flex-1` ở danh sách quyền lợi chứ không ở mô tả: nhờ vậy nút bấm của ba
+                      thẻ luôn thẳng hàng nhau dù mô tả dài ngắn khác nhau. */}
+                  <ul className="mt-4 flex-1 space-y-2.5 text-sm text-ink-600">
+                    {[
+                      'Toàn bộ chức năng phân tích',
+                      pkg.max_telegram_alerts < 0
+                        ? 'Không giới hạn đăng ký nhận tín hiệu'
+                        : `${pkg.max_telegram_alerts} lượt đăng ký nhận tín hiệu`,
+                      `${pkg.max_ai_questions_per_day} câu hỏi chuyên viên mỗi ngày`,
+                    ].map((line) => (
+                      <li key={line} className="flex items-start gap-2.5">
+                        {/* Dấu tích trong một đĩa tròn nhạt, không phải ký tự ✓ trần. Ký tự
+                            trần lấy nét chữ của font nên mảnh hơn hẳn phần còn lại và trông
+                            như gõ nhầm; đĩa tròn cho nó một hình dạng ổn định. */}
+                        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-tone-green-bg text-tone-green-fg">
+                          <Icon name="check" size={11} />
+                        </span>
+                        <span className="leading-relaxed">{line}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <Button
+                    className="mt-5"
+                    fullWidth
+                    variant={isCurrent ? 'outline' : featured ? 'primary' : 'outline'}
+                    disabled={isCurrent}
+                    onClick={() => {
+                      setSelected(pkg);
+                      setAcceptRefund(false);
+                    }}
+                  >
+                    {isCurrent ? 'Gói hiện tại' : isUpgrade ? 'Nâng cấp' : 'Gia hạn'}
+                  </Button>
+                </div>
               </Card>
             );
           })}

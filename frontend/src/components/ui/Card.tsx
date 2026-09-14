@@ -10,16 +10,28 @@ export function Card({
   children,
   className,
   padded = true,
+  interactive = false,
 }: {
   children: ReactNode;
   className?: string;
   padded?: boolean;
+  /**
+   * Thẻ là một mục bấm được (thẻ bài viết, thẻ tin, thẻ chiến lược).
+   *
+   * Bật lên thì thẻ nhấc một pixel và đổ bóng sâu hơn khi rê chuột — xem `.card-interactive`
+   * trong `globals.css`. Không bật mặc định: một lưới thẻ **chỉ để đọc** mà thẻ nào cũng nhúc
+   * nhích theo chuột là lời hứa sai, người dùng sẽ bấm vào rồi không có gì xảy ra.
+   */
+  interactive?: boolean;
 }) {
   return (
     <div
       className={cn(
-        'rounded-2xl border border-line bg-surface shadow-card',
+        // `surface-lift` thêm vệt sáng ở mép trên khi nền tối — thứ thay cho đổ bóng, vốn gần
+        // như vô hình trên nền gần đen.
+        'surface-lift rounded-2xl border border-line bg-surface shadow-card',
         padded && 'p-4 sm:p-5',
+        interactive && 'card-interactive',
         className,
       )}
     >
@@ -82,8 +94,8 @@ export function StatCard({
     <Wrapper
       onClick={onClick}
       className={cn(
-        'group rounded-2xl border border-line bg-surface p-4 text-left shadow-card',
-        onClick && 'transition-colors hover:border-line-strong hover:bg-ink-50',
+        'surface-lift group rounded-2xl border border-line bg-surface p-4 text-left shadow-card',
+        onClick && 'card-interactive',
       )}
     >
       {/*

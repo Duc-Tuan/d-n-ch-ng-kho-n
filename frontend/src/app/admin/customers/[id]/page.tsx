@@ -785,7 +785,7 @@ function ComplianceEvents({ userId }: { userId: number }) {
   });
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <Card>
         <CardHeader
           title="Thay đổi trạng thái compliance"

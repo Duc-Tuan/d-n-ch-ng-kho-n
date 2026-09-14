@@ -11,8 +11,10 @@ import { Button } from './Button';
 export function Spinner({ label, className }: { label?: string; className?: string }) {
   return (
     <div className={cn('flex flex-col items-center gap-2', className)}>
+      {/* Cung sáng chạy trên một vòng mờ, không phải một vòng xám quay tròn: chỉ khi có một
+          cung **đậm hơn hẳn** phần còn lại thì mắt mới đọc ra là đang quay. */}
       <span
-        className="h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-ink-900"
+        className="h-6 w-6 animate-spin rounded-full border-2 border-ink-200 border-t-brand"
         aria-hidden
       />
       {label && <span className="text-sm text-ink-500">{label}</span>}
@@ -187,6 +189,13 @@ export function Disclaimer({
   );
 }
 
+/**
+ * Ô giữ chỗ trong lúc chờ dữ liệu.
+ *
+ * Một vệt sáng chạy ngang thay vì cả khối mờ dần đều. Khối nhấp nháy đọc ra là "có gì đó
+ * hỏng"; vệt sáng chạy theo một hướng đọc ra là "đang nạp" — cùng chi phí, khác hẳn thông
+ * điệp. Hiệu ứng khai trong `globals.css` vì nó cần một keyframe riêng.
+ */
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse rounded bg-ink-200', className)} />;
+  return <div className={cn('skeleton rounded-lg bg-ink-200', className)} />;
 }

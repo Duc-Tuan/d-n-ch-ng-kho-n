@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { MarketAnalysisPanel } from '@/components/domain/MarketAnalysisPanel';
 import { PriceChart } from '@/components/domain/PriceChart';
@@ -19,13 +19,44 @@ import { CUSTOMER } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatDate } from '@/lib/datetime';
 import { formatNumber, formatPercent, formatPrice } from '@/lib/format';
-import type { Candle, OhlcvResponse, PriceBoardItem, PriceBoardResponse, SymbolInfo } from '@/types';
+import type {
+  AssetClass,
+  Candle,
+  OhlcvResponse,
+  PriceBoardItem,
+  PriceBoardResponse,
+  SymbolInfo,
+} from '@/types';
 
+/**
+ * Trục thứ nhất: **loại tài sản**.
+ *
+ * Trước đây hàng tab đầu tiên là ba sàn HOSE · HNX · UPCOM, và đó là cách phân loại của *sở giao
+ * dịch* chứ không phải của người dùng. Người mở bảng giá lên biết mình định xem cổ phiếu hay xem
+ * hợp đồng phái sinh trước khi biết mình quan tâm sàn nào — nhiều người không bao giờ nghĩ tới
+ * sàn. Sàn tụt xuống hàng thứ hai, làm bộ lọc bên trong tab Chứng khoán.
+ */
+const ASSET_TABS: Array<{ key: AssetClass; label: string }> = [
+  { key: 'STOCK', label: 'Chứng khoán' },
+  { key: 'DERIVATIVE', label: 'Phái sinh' },
+];
+
+/**
+ * Trục thứ hai: **sàn niêm yết**, chỉ có nghĩa với cổ phiếu.
+ *
+ * Khoá rỗng là "tất cả" và là mặc định. Bản trước mở thẳng vào HOSE, nghĩa là người dùng không
+ * bao giờ thấy mã HNX/UPCOM trừ khi họ tự đổi tab — trong khi danh mục theo dõi có đủ cả ba sàn.
+ */
 const EXCHANGES = [
+  { key: '', label: 'Tất cả' },
   { key: 'HOSE', label: 'HOSE' },
   { key: 'HNX', label: 'HNX' },
   { key: 'UPCOM', label: 'UPCOM' },
 ];
+
+/** Hợp đồng mặc định khi mở tab Phái sinh — tháng gần nhất là hợp đồng thanh khoản nhất. */
+const DEFAULT_DERIVATIVE = 'VN30F1M';
+const DEFAULT_STOCK = 'HPG';
 
 /**
  * Màu theo quy ước thị trường Việt Nam: **tím trần · xanh lam sàn** · tăng xanh lá · giảm đỏ ·
@@ -68,9 +99,11 @@ function changeChipClass(change: number | null | undefined): string {
 }
 
 export default function MarketPage() {
-  const [exchange, setExchange] = useState('HOSE');
+  const [assetClass, setAssetClass] = useState<AssetClass>('STOCK');
+  /** Rỗng nghĩa là mọi sàn. Chỉ áp dụng cho cổ phiếu — phái sinh chỉ có một sàn. */
+  const [exchange, setExchange] = useState('');
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState('HPG');
+  const [selected, setSelected] = useState(DEFAULT_STOCK);
 
   /**
    * Biểu đồ đang phóng to kín màn hình hay không.
@@ -85,7 +118,13 @@ export default function MarketPage() {
   // cần đúng một bộ này — biểu đồ để vẽ, nút phân tích để gửi cho mô hình đọc.
   const indicators = useIndicators();
 
-  // Đang tìm kiếm thì hiển thị kết quả tìm; không thì hiển thị bảng giá theo sàn.
+  /**
+   * Đang tìm kiếm thì hiển thị kết quả tìm; không thì hiển thị bảng giá theo tab.
+   *
+   * Ô tìm kiếm cố ý **không** lọc theo tab đang mở: người gõ "VN30" trong khi đứng ở tab Chứng
+   * khoán vẫn phải thấy hợp đồng phái sinh. Bắt họ đoán đúng tab trước rồi mới cho tìm là biến
+   * ô tìm kiếm thành một câu đố.
+   */
   const { data: found } = useApiQuery<SymbolInfo[]>(
     search.trim().length >= 1 ? `${CUSTOMER}/market/symbols` : null,
     { q: search.trim(), limit: 30 },
@@ -95,7 +134,13 @@ export default function MarketPage() {
     `${CUSTOMER}/market/board`,
     search.trim().length >= 1
       ? { symbols: (found ?? []).map((s) => s.symbol), limit: 30 }
-      : { exchange, limit: 60 },
+      : {
+          asset_class: assetClass,
+          // Bỏ hẳn tham số khi chọn "Tất cả" thay vì gửi chuỗi rỗng: máy chủ phân biệt
+          // "không lọc" với "lọc theo sàn tên là rỗng", và cái sau trả về không dòng nào.
+          exchange: assetClass === 'STOCK' && exchange ? exchange : undefined,
+          limit: 60,
+        },
     // Đường lùi, không phải đường chính. Kênh WebSocket bên dưới mới là thứ đẩy giá; lượt gọi
     // lại này chỉ để lấy những trường kênh kia không mang (tên công ty, mã mới thêm vào danh
     // mục) và để bảng vẫn sống khi kênh rớt. Giữ 2 phút như cũ khi kênh còn chạy; kênh chết thì
@@ -168,6 +213,44 @@ export default function MarketPage() {
   );
   const lastCandle = chartCandles[chartCandles.length - 1];
 
+  const defaultSymbol = assetClass === 'DERIVATIVE' ? DEFAULT_DERIVATIVE : DEFAULT_STOCK;
+
+  /**
+   * Đổi tab thì biểu đồ đi theo.
+   *
+   * Không làm bước này thì bấm sang Phái sinh cho ra một bảng bốn hợp đồng nằm cạnh biểu đồ HPG
+   * — người dùng phải tự bấm thêm một lần nữa mới hiểu tab đã đổi.
+   *
+   * Bộ lọc sàn **giữ nguyên** khi quay lại tab Chứng khoán: nó là lựa chọn riêng của tab đó, và
+   * xoá nó mỗi lần người dùng ghé qua tab kia là bắt họ đặt lại.
+   */
+  function changeAssetClass(next: AssetClass) {
+    if (next === assetClass) return;
+    setAssetClass(next);
+    setSelected(next === 'DERIVATIVE' ? DEFAULT_DERIVATIVE : DEFAULT_STOCK);
+  }
+
+  /**
+   * Lưới an toàn cho mã mặc định.
+   *
+   * `VN30F1M` được nạp ở migration `0016`, nhưng một bản cài chưa chạy migration — hoặc một danh
+   * mục bị sửa tay ở site quản trị — sẽ không có nó, và khi đó tab Phái sinh mở ra với một biểu
+   * đồ trắng cạnh một bảng có dữ liệu. Rơi về dòng đầu tiên thì màn hình luôn nói được điều gì
+   * đó.
+   *
+   * Điều kiện `selected === defaultSymbol` là phần quan trọng: hiệu ứng này **chỉ** chạm vào mã
+   * mặc định mà chưa ai bấm tới. Người dùng đã tự chọn một mã rồi lọc sang sàn khác vẫn giữ
+   * nguyên biểu đồ của mình, không bị kéo về dòng đầu bảng.
+   */
+  useEffect(() => {
+    if (search.trim()) return;
+    const items = board?.items ?? [];
+    if (!items.length) return;
+    if (selected !== defaultSymbol) return;
+    if (items.some((row) => row.symbol === defaultSymbol)) return;
+    setSelected(items[0].symbol);
+  }, [board?.items, defaultSymbol, search, selected]);
+
   return (
     <div className="space-y-5 pb-6">
       {/* Cột trái vừa đủ cho bốn cột số của bảng giá; phần dôi ra dồn hết cho biểu đồ, vì đó mới
@@ -192,8 +275,49 @@ export default function MarketPage() {
             onSearch={setSearch}
           />
 
+          {/*
+            Hai tầng, và khoảng cách giữa chúng là thứ nói lên quan hệ: tab loại tài sản là
+            điều hướng (đổi hẳn nội dung bảng), hàng sàn bên dưới chỉ là bộ lọc thu hẹp cái
+            đang xem. Dựng cả hai cùng cỡ, cùng kiểu thì người dùng phải đọc chữ mới biết cái
+            nào quan trọng hơn.
+
+            Ẩn cả khối khi đang tìm kiếm: kết quả tìm cắt ngang cả hai trục, hiện một tab "đang
+            bật" trong lúc bảng không hề lọc theo nó là nói sai.
+          */}
           {!search.trim() && (
-            <Tabs items={EXCHANGES} active={exchange} onChange={setExchange} />
+            <div className="space-y-2.5">
+              <Tabs
+                items={ASSET_TABS}
+                active={assetClass}
+                onChange={(key) => changeAssetClass(key as AssetClass)}
+              />
+
+              {/* Sàn chỉ có nghĩa với cổ phiếu: phái sinh Việt Nam chỉ niêm yết trên HNX, nên
+                  một bộ lọc ba sàn ở đó là ba nút mà hai nút luôn trả về danh sách rỗng. */}
+              {assetClass === 'STOCK' && (
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="Lọc theo sàn">
+                  {EXCHANGES.map((item) => {
+                    const active = exchange === item.key;
+                    return (
+                      <button
+                        key={item.key || 'all'}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setExchange(item.key)}
+                        className={cn(
+                          'rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
+                          active
+                            ? 'border-brand bg-brand-soft text-brand'
+                            : 'border-line text-ink-500 hover:border-line-strong hover:text-ink-800',
+                        )}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           )}
 
           {board?.realtime_enabled && <SessionBar board={board} connected={connected} />}

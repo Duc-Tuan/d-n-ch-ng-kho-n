@@ -1,5 +1,7 @@
 node_modules/
 .next/
+# Thu muc build phu khi chay tien trinh Next thu hai (xem distDir trong next.config.mjs).
+.next-*/
 out/
 .env.local
 .env*.local

@@ -79,7 +79,7 @@ export default function AccountPage() {
   ];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader title="Tài khoản" description="Thông tin cá nhân, gói dịch vụ và bảo mật" />
 
       <div className="grid gap-5 lg:grid-cols-2">

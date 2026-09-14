@@ -5,6 +5,17 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
+  /**
+   * Thư mục build. Mặc định vẫn là `.next` — đặt `NEXT_DIST_DIR` để chạy **một tiến trình Next
+   * thứ hai** trên cùng mã nguồn mà không giẫm lên nhau.
+   *
+   * Hai `next dev` cùng dùng `.next` thì tiến trình sau ghi đè bản biên dịch của tiến trình
+   * trước, và tiến trình trước bắt đầu trả 404 cho chính các chunk JS của nó — trang tải ra
+   * HTML trắng, không kèm một dòng lỗi nào giải thích. Cần tới cái này khi vừa chạy bản của
+   * mình vừa để bản đang xem dở sống, ví dụ lúc đối chiếu trước/sau một thay đổi giao diện.
+   */
+  distDir: process.env.NEXT_DIST_DIR ?? '.next',
+
   // BR-824 — ngân sách hiệu năng: ảnh WebP/AVIF, lazy load mặc định của next/image.
   images: {
     formats: ['image/avif', 'image/webp'],

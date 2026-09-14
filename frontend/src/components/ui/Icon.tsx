@@ -69,6 +69,8 @@ export type IconName =
   | 'trending-down'
   | 'sparkles'
   | 'spinner'
+  | 'sun'
+  | 'moon'
   // Công cụ vẽ trên biểu đồ — xem `components/domain/chart/DrawingToolbar`.
   | 'cursor'
   | 'crosshair'
@@ -340,6 +342,13 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M3 8.5h3M18 8.5h3" />
     </>
   ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+    </>
+  ),
+  moon: <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5" />,
 };
 
 export function Icon({ name, size = 20, className, ...props }: IconProps) {

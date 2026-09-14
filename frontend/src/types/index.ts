@@ -409,10 +409,14 @@ export type ComplianceDetail = {
 };
 
 // ---------- Dữ liệu thị trường (Phần 12) ----------
+/** Cổ phiếu niêm yết hay hợp đồng phái sinh — khớp `Symbol.asset_class` của backend. */
+export type AssetClass = 'STOCK' | 'DERIVATIVE';
+
 export type SymbolInfo = {
   id: number;
   symbol: string;
   exchange: string;
+  asset_class: AssetClass;
   company_name: string | null;
   last_ohlcv_date: string | null;
 };
@@ -474,6 +478,7 @@ export type OhlcvResponse = {
 export type PriceBoardItem = {
   symbol: string;
   exchange: string;
+  asset_class: AssetClass;
   company_name: string | null;
   trade_date: string | null;
   open: number | null;
@@ -507,7 +512,9 @@ export type PriceBoardItem = {
 
 export type PriceBoardResponse = {
   items: PriceBoardItem[];
-  exchange: string;
+  /** San dang loc, rong nghia la moi san. */
+  exchange: string | null;
+  asset_class: AssetClass;
   attribution: string;
   /** Ca bang dang chay real-time hay khong. */
   realtime: boolean;

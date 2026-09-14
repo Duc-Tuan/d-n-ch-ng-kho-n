@@ -19,6 +19,7 @@ import {
   type IndicatorTable,
 } from '@/lib/indicators/types';
 
+import { useResolvedTheme } from '@/hooks';
 import { isChartLive } from './chartLifecycle';
 import { chartColor } from './chartTheme';
 
@@ -44,6 +45,7 @@ export function ShapesLayer({
   shapes: IndicatorShapes;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = useResolvedTheme();
 
   // Dữ liệu đọc qua ref: hàm vẽ được đăng ký một lần vào sự kiện kéo/phóng của biểu đồ, nên nó
   // không được phép "đóng gói" mất giá trị cũ.
@@ -195,9 +197,11 @@ export function ShapesLayer({
     return () => timeScale.unsubscribeVisibleLogicalRangeChange(handler);
   }, [chart, render]);
 
+  /* `theme` trong deps: nhãn và nền của các hình vẽ đọc màu từ `:root` **lúc vẽ**, nên đổi
+     bảng màu mà không vẽ lại thì chữ trắng ở lại trên nền vừa chuyển sang trắng. */
   useEffect(() => {
     render();
-  }, [render, shapes, candles, width, height]);
+  }, [render, shapes, candles, width, height, theme]);
 
   return (
     <canvas

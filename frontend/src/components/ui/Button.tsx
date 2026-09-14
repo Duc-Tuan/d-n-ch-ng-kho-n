@@ -17,22 +17,27 @@ type Size = 'sm' | 'md' | 'lg';
  * ở đó `ink-900` gần trắng và chữ biến mất.
  */
 const VARIANTS: Record<Variant, string> = {
+  /*
+    Vệt sáng mảnh ở mép trên (`inset 0 1px 0`) là thứ tách một nút đặc khỏi một hình chữ nhật
+    tô màu: nó mô phỏng ánh sáng hắt lên cạnh trên, đúng như mọi nút vật lý. Viết thành
+    `shadow-[...]` chứ không phải `shadow-sm` vì Tailwind không có sẵn bóng hai lớp kiểu này.
+  */
   primary:
-    'bg-primary text-primary-fg shadow-sm hover:bg-primary-hover active:bg-primary-active disabled:bg-ink-300 disabled:text-ink-500 disabled:shadow-none',
+    'bg-primary text-primary-fg shadow-[inset_0_1px_0_0_rgb(255_255_255/0.15),0_1px_2px_0_rgb(0_0_0/0.12)] hover:bg-primary-hover active:bg-primary-active disabled:bg-ink-300 disabled:text-ink-500 disabled:shadow-none',
   secondary: 'bg-ink-100 text-ink-900 hover:bg-ink-200 active:bg-ink-300',
   outline:
     'border border-line bg-surface text-ink-800 hover:border-line-strong hover:bg-ink-50 active:bg-ink-100',
   ghost: 'text-ink-600 hover:bg-ink-100 hover:text-ink-900 active:bg-ink-200',
   danger:
-    'bg-danger text-danger-fg shadow-sm hover:bg-danger-hover active:bg-danger-active disabled:bg-ink-300 disabled:text-ink-500 disabled:shadow-none',
+    'bg-danger text-danger-fg shadow-[inset_0_1px_0_0_rgb(255_255_255/0.15),0_1px_2px_0_rgb(0_0_0/0.12)] hover:bg-danger-hover active:bg-danger-active disabled:bg-ink-300 disabled:text-ink-500 disabled:shadow-none',
   link: 'text-ink-900 underline-offset-4 hover:underline',
 };
 
 // BR-822 — vùng chạm tối thiểu 44×44px; cỡ 'sm' chỉ dùng trong bảng dày đặc.
 const SIZES: Record<Size, string> = {
-  sm: 'h-9 px-3 text-sm gap-1.5',
-  md: 'h-touch px-4 text-sm gap-2',
-  lg: 'h-12 px-6 text-base gap-2',
+  sm: 'h-9 rounded-lg px-3 text-sm gap-1.5',
+  md: 'h-touch rounded-xl px-4 text-sm gap-2',
+  lg: 'h-12 rounded-xl px-6 text-base gap-2',
 };
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -67,9 +72,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        'inline-flex items-center justify-center rounded-lg font-medium transition-colors',
+        'inline-flex items-center justify-center font-medium transition-colors',
+        // Nút lún xuống một chút khi nhấn. Phản hồi chạm quan trọng nhất trên điện thoại, nơi
+        // không có con trỏ nào để nói "bạn đang bấm đúng chỗ".
+        'active:scale-[0.98] motion-reduce:active:scale-100',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-2',
-        'disabled:cursor-not-allowed disabled:opacity-60',
+        'disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100',
         VARIANTS[variant],
         SIZES[size],
         fullWidth && 'w-full',
@@ -96,9 +104,10 @@ export const IconButton = forwardRef<
       aria-label={label}
       title={label}
       className={cn(
-        'inline-flex items-center justify-center rounded-lg transition-colors',
+        'inline-flex items-center justify-center rounded-xl transition-colors',
+        'active:scale-[0.98] motion-reduce:active:scale-100',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-2',
-        'disabled:cursor-not-allowed disabled:opacity-60',
+        'disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100',
         VARIANTS[variant],
         size === 'sm' ? 'h-9 w-9' : size === 'lg' ? 'h-12 w-12' : 'h-touch w-touch',
         className,

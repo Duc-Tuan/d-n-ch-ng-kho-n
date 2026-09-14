@@ -86,7 +86,7 @@ function NotificationSettings() {
   }, {});
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         title="Cài đặt thông báo"
         description="Kết nối Telegram và quản lý các cặp chiến lược × mã bạn muốn nhận tín hiệu"

@@ -22,12 +22,17 @@ import {
  * Màu lấy từ **biến CSS**, không viết cứng ở đây.
  *
  * `lightweight-charts` vẽ lên canvas nên không nhận class Tailwind — nó cần chuỗi màu thật. Mà
- * site khách hàng chạy nền tối còn site quản trị nền sáng, nên "thật" là bao nhiêu chỉ biết
+ * bảng màu do **người dùng chọn** (sáng/tối/theo hệ thống), nên "thật" là bao nhiêu chỉ biết
  * được lúc chạy. Đọc thẳng từ `:root` giữ cho biểu đồ và phần giao diện quanh nó luôn cùng một
  * bảng màu: sửa `globals.css` là biểu đồ đi theo, không phải nhớ sửa thêm chỗ này.
  *
  * Đọc lúc **tạo biểu đồ** chứ không phải lúc nạp module: ở lượt dựng phía máy chủ không có
  * `document`, và giá trị lấy được khi đó sẽ đóng băng vào biến module.
+ *
+ * Hệ quả quan trọng: hàm này trả về một **bản chụp**, không phải một liên kết sống. Nơi nào
+ * dựng biểu đồ cũng phải theo dõi `useResolvedTheme()` và gọi lại `applyOptions` khi bảng màu
+ * đổi, nếu không biểu đồ giữ nguyên nền cũ giữa một trang đã chuyển màu — xem `PriceChart`,
+ * `IndicatorPane`, `StrategyChart`, `StrategyRunView`.
  */
 function themeRgb(token: string, fallback: string): string {
   if (typeof document === 'undefined') return fallback;

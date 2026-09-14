@@ -134,7 +134,7 @@ export default function MyStrategyDetailPage() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         breadcrumb={
           <Link href="/strategies" className="hover:text-ink-700">

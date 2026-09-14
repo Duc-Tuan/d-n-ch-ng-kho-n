@@ -33,7 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { SymbolCombobox } from '@/components/domain/SymbolCombobox';
 import { Button, Icon, IconButton } from '@/components/ui';
-import { useIsMobile } from '@/hooks';
+import { useIsMobile, useResolvedTheme } from '@/hooks';
 import { CUSTOMER, api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import type { Candle as IndicatorCandle } from '@/lib/indicators/math';
@@ -174,6 +174,8 @@ export function PriceChart({
   const overlaySeriesRef = useRef<Map<string, ISeriesApi<SeriesType>>>(new Map());
 
   const isMobile = useIsMobile();
+  // Biểu đồ vẽ lên canvas nên phải tự biết bảng màu đang là gì — xem effect đổi màu bên dưới.
+  const theme = useResolvedTheme();
   const size = useElementSize(hostRef);
 
   const [range, setRange] = useState('1y');
@@ -624,6 +626,28 @@ export function PriceChart({
   useEffect(() => {
     chartRef.current?.applyOptions({ timeScale: { visible: !lastVisiblePane } });
   }, [lastVisiblePane]);
+
+  /**
+   * Đổi bảng màu khi người dùng bấm nút sáng/tối.
+   *
+   * `lightweight-charts` vẽ lên canvas, nên nó **không** đi theo biến CSS như phần giao diện
+   * còn lại: màu được đọc một lần lúc dựng biểu đồ rồi nằm luôn trong cấu hình của thư viện.
+   * Không có effect này thì đổi sang nền sáng sẽ để lại một ô biểu đồ đen giữa trang trắng,
+   * và người dùng phải F5.
+   *
+   * `applyOptions` chứ không dựng lại: dựng lại làm mất vùng nhìn, mất chuỗi nến đã nạp thêm,
+   * và giật một cái ngay giữa hiệu ứng chuyển nền. `theme` trong deps chính là thứ kéo effect
+   * chạy lại — `baseChartOptions()` tự đọc giá trị mới từ `:root` khi được gọi.
+   */
+  useEffect(() => {
+    chartRef.current?.applyOptions(baseChartOptions());
+    priceRef.current?.applyOptions({
+      upColor: up(),
+      downColor: down(),
+      wickUpColor: up(),
+      wickDownColor: down(),
+    });
+  }, [theme, epoch]);
 
   // Khung trong ngày phải hiện giờ trên trục, không thì cả một phiên nến chỉ có một nhãn ngày
   // lặp lại và không đọc được nến nào ở phút nào. Riêng khung 1 phút bật thêm giây: thư viện

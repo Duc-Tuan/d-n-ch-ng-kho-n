@@ -20,19 +20,30 @@ export {
   type QuoteLevel,
 } from './useMarketRealtime';
 export { useStrategyRun, useRuleCatalog } from './useStrategyRun';
+export {
+  ThemeProvider,
+  useTheme,
+  useResolvedTheme,
+  type ThemeMode,
+  type ResolvedTheme,
+} from './useTheme';
 
 /**
- * Ghim bảng màu cho vùng đang đứng.
+ * Ghim vùng **quản trị**: nền sáng, `data-area='admin'`.
  *
  * Script trong `app/layout.tsx` đã đặt đúng từ lượt tải đầu; hook này lo phần còn lại — điều
- * hướng bằng router phía trình duyệt không tải lại trang, nên script đó không chạy lại. Gọi ở
- * khung của từng vùng (`CustomerShell`, `AdminShell`) chứ không ở từng trang: khung mới là thứ
- * biết mình thuộc vùng nào.
+ * hướng bằng router phía trình duyệt không tải lại trang, nên script đó không chạy lại, và một
+ * nhân viên đi từ `/` sang `/admin` sẽ mang theo nền tối của site khách hàng.
+ *
+ * Site khách hàng **không** dùng hook này: ở đó bảng màu là tùy chọn của người dùng và do
+ * `ThemeProvider` (`hooks/useTheme`) quản lý.
  */
-export function useThemeArea(theme: 'dark' | 'light') {
+export function useAdminThemeArea() {
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    const root = document.documentElement;
+    root.dataset.area = 'admin';
+    root.dataset.theme = 'light';
+  }, []);
 }
 
 /** Hoãn giá trị — dùng cho ô tìm kiếm để không gọi API mỗi lần gõ phím. */

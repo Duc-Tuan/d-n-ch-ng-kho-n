@@ -22,6 +22,7 @@ import { getIndicator, instanceLabel } from '@/lib/indicators/registry';
 import type { IndicatorInstance, PlotDef } from '@/lib/indicators/types';
 
 import { removeChart } from './chartLifecycle';
+import { useResolvedTheme } from '@/hooks';
 import { LINE_STYLE_MAP, PRICE_SCALE_MIN_WIDTH, baseChartOptions, chartColors } from './chartTheme';
 import { useElementSize } from './useElementSize';
 
@@ -74,6 +75,8 @@ export function IndicatorPane({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<Map<string, ISeriesApi<SeriesType>>>(new Map());
   const size = useElementSize(hostRef);
+  // Cửa sổ chỉ báo vẽ lên canvas, không đi theo biến CSS — xem effect `paneOptions` bên dưới.
+  const theme = useResolvedTheme();
 
   const [hover, setHover] = useState<Record<string, number | null>>({});
 
@@ -106,9 +109,18 @@ export function IndicatorPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [def?.id]);
 
+  /**
+   * Bảng màu và trục thời gian cùng đi qua một chỗ: cả hai chỉ là `applyOptions`.
+   *
+   * `theme` trong deps là thứ kéo effect chạy lại khi người dùng bấm nút sáng/tối —
+   * `paneOptions` gọi `baseChartOptions`, vốn đọc màu thật từ `:root` tại thời điểm gọi. Thiếu
+   * nó thì các cửa sổ chỉ báo giữ nguyên nền cũ trong khi biểu đồ giá phía trên đã đổi, và
+   * chồng chỉ báo trông như ghép từ hai giao diện khác nhau — đúng thứ `chartTheme` sinh ra
+   * để tránh.
+   */
   useEffect(() => {
     chartRef.current?.applyOptions(paneOptions(showTimeScale));
-  }, [showTimeScale]);
+  }, [showTimeScale, theme]);
 
   useEffect(() => {
     if (size.width && size.height) {

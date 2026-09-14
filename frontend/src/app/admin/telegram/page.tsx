@@ -42,7 +42,7 @@ export default function AdminTelegramPage() {
   const queuedToday = data.deliveries_today?.QUEUED ?? 0;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         title="Thông báo Telegram"
         description="Tình trạng kết nối, tỷ lệ gửi thành công và dữ liệu quan tâm của khách hàng"

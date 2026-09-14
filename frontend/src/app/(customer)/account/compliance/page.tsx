@@ -61,7 +61,7 @@ export default function CompliancePage() {
   const { current, rules } = data;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         title="Điều kiện duy trì tài khoản"
         description="Đối chiếu số liệu tài khoản của bạn với ngưỡng quy định"

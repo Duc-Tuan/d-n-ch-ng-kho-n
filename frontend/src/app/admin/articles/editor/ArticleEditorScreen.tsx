@@ -228,7 +228,7 @@ export function ArticleEditorScreen({ articleId }: { articleId: number | null })
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         breadcrumb={
           <button onClick={goBack} className="hover:text-ink-700">

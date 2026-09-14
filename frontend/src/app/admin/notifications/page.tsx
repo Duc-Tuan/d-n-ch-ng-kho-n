@@ -94,7 +94,7 @@ export default function BroadcastPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         title="Gửi thông báo"
         description="Gửi thông báo tới nhóm khách hàng theo bộ lọc"
@@ -177,7 +177,7 @@ export default function BroadcastPage() {
           </Card>
         </div>
 
-        <div className="space-y-5">
+        <div className="space-y-5 pb-6">
           <Card>
             <CardHeader title="Xem trước" />
             {preview ? (

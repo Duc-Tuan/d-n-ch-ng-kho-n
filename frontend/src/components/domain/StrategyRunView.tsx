@@ -26,6 +26,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Alert, Badge, Card, Disclaimer, EmptyState, Icon, Table, type Column } from '@/components/ui';
+import { useResolvedTheme } from '@/hooks';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -129,6 +130,7 @@ function RunChart({
   const priceRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const overlayRefs = useRef<ISeriesApi<'Line'>[]>([]);
 
+  const theme = useResolvedTheme();
   const [candles, setCandles] = useState<Candle[]>(initialCandles);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
@@ -272,6 +274,32 @@ function RunChart({
       overlayRefs.current = [];
     };
   }, [height, loadOlder]);
+
+  /**
+   * Đổi bảng màu khi người dùng bấm nút sáng/tối.
+   *
+   * Biểu đồ vẽ lên canvas, nên màu của nó là bản sao chụp lúc dựng chứ không đi theo biến CSS.
+   * `applyOptions` thay vì dựng lại: dựng lại làm mất vùng nhìn và toàn bộ nến đã nạp thêm khi
+   * người dùng cuộn ngược về quá khứ.
+   */
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const next = chartColors();
+    chart.applyOptions({
+      layout: { background: { type: ColorType.Solid, color: next.background }, textColor: next.text },
+      grid: { vertLines: { color: next.grid }, horzLines: { color: next.grid } },
+      rightPriceScale: { borderColor: next.border },
+      timeScale: { borderColor: next.border },
+    });
+    priceRef.current?.applyOptions({
+      upColor: up(),
+      downColor: down(),
+      wickUpColor: up(),
+      wickDownColor: down(),
+    });
+  }, [theme]);
 
   // Khi nạp thêm lịch sử, giữ nguyên vùng người dùng đang nhìn thay vì nhảy về đầu.
   const previousCount = useRef(0);

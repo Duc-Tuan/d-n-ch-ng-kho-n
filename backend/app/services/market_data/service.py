@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.datetime_utils import local_today, utcnow
 from app.core.exceptions import NotFound, ValidationError
-from app.models.market import MarketSyncLog, OhlcvDaily, Symbol
+from app.models.market import ASSET_STOCK, MarketSyncLog, OhlcvDaily, Symbol
 from app.services.market_data import bars as bars_store
 from app.services.market_data import timeframes as tfs
 from app.services.market_data.base import Bar, MarketDataError, SymbolInfo
@@ -56,6 +56,12 @@ def sync_symbols(db: Session) -> dict:
 
     Ngành và tier **không** bị ghi đè — hai trường đó do bộ phận phân tích đặt trên giao diện,
     nhà cung cấp không biết gì về chúng.
+
+    **Hợp đồng phái sinh đứng ngoài hoàn toàn.** Danh sách của SSI iBoard chỉ có cổ phiếu ba
+    sàn, nên VN30F1M và ba anh em của nó không bao giờ xuất hiện trong `listed`. Đi tiếp vào
+    vòng lặp thì chúng rơi đúng vào nhánh "biến mất khỏi thị trường" và bị tắt cờ — bảng giá
+    phái sinh trống trơn sau lần đồng bộ danh mục đầu tiên, không một dòng lỗi nào. Chúng là
+    một tập cố định nạp sẵn ở migration `0016`, không có gì để nhà cung cấp xác nhận.
     """
     provider = get_provider()
     try:
@@ -69,7 +75,7 @@ def sync_symbols(db: Session) -> dict:
         # Nguồn lỗi trả rỗng mà vẫn chạy tiếp thì cả danh mục bị đánh dấu huỷ niêm yết.
         raise MarketDataError("Danh sách mã trả về rỗng — không cập nhật gì để tránh hỏng danh mục")
 
-    watched = list(db.scalars(select(Symbol)).all())
+    watched = list(db.scalars(select(Symbol).where(Symbol.asset_class == ASSET_STOCK)).all())
     updated = relisted = delisted = 0
 
     for row in watched:
@@ -507,9 +513,15 @@ def sync_ohlcv_batch(
 # khỏi nhau, và cùng một mã ở cùng một khung cho hai hình khác nhau tuỳ màn hình nào gọi.
 # ======================================================================
 def search_symbols(
-    db: Session, query: str | None = None, exchange: str | None = None, limit: int = 50
+    db: Session,
+    query: str | None = None,
+    exchange: str | None = None,
+    limit: int = 50,
+    asset_class: str | None = None,
 ) -> list[Symbol]:
     stmt = select(Symbol).where(Symbol.is_active.is_(True))
+    if asset_class:
+        stmt = stmt.where(Symbol.asset_class == asset_class.upper())
     if exchange:
         stmt = stmt.where(Symbol.exchange == exchange.upper())
     if query:
@@ -529,7 +541,9 @@ def search_symbols(
     return list(db.scalars(stmt.limit(limit)).all())
 
 
-def list_symbol_codes(db: Session, exchange: str | None = None) -> list[str]:
+def list_symbol_codes(
+    db: Session, exchange: str | None = None, asset_class: str | None = None
+) -> list[str]:
     """Toàn bộ mã đang theo dõi, chỉ riêng cột mã.
 
     Tách khỏi `search_symbols` vì mục đích khác hẳn: dùng cho các nút chọn cả sàn hoặc cả danh
@@ -538,13 +552,19 @@ def list_symbol_codes(db: Session, exchange: str | None = None) -> list[str]:
     có hơn 1.500 mã thì phần dữ liệu trả về vẫn nhỏ hơn một lần tra cứu có kèm tên doanh nghiệp.
     """
     stmt = select(Symbol.symbol).where(Symbol.is_active.is_(True))
+    if asset_class:
+        stmt = stmt.where(Symbol.asset_class == asset_class.upper())
     if exchange:
         stmt = stmt.where(Symbol.exchange == exchange.upper())
     return list(db.scalars(stmt.order_by(Symbol.symbol)).all())
 
 
 def get_price_board(
-    db: Session, symbols: list[str] | None = None, exchange: str | None = None, limit: int = 50
+    db: Session,
+    symbols: list[str] | None = None,
+    exchange: str | None = None,
+    limit: int = 50,
+    asset_class: str | None = None,
 ) -> list[dict]:
     """Bảng giá: phiên gần nhất, phủ giá thời gian thực lên nếu kho còn tươi.
 
@@ -560,8 +580,13 @@ def get_price_board(
     symbol_stmt = select(Symbol).where(Symbol.is_active.is_(True))
     if symbols:
         symbol_stmt = symbol_stmt.where(Symbol.symbol.in_([s.upper() for s in symbols]))
-    elif exchange:
-        symbol_stmt = symbol_stmt.where(Symbol.exchange == exchange.upper())
+    else:
+        # Loại tài sản lọc **cả khi** có lọc sàn: phái sinh niêm yết trên HNX, nên hỏi "HNX" mà
+        # không kèm loại thì bảng cổ phiếu HNX có thêm bốn dòng hợp đồng nằm lẫn vào giữa.
+        if asset_class:
+            symbol_stmt = symbol_stmt.where(Symbol.asset_class == asset_class.upper())
+        if exchange:
+            symbol_stmt = symbol_stmt.where(Symbol.exchange == exchange.upper())
     symbol_list = list(db.scalars(symbol_stmt.order_by(Symbol.symbol).limit(limit)).all())
 
     if not symbol_list:
@@ -595,6 +620,7 @@ def get_price_board(
             {
                 "symbol": info.symbol,
                 "exchange": info.exchange,
+                "asset_class": info.asset_class,
                 "company_name": info.company_name,
                 "trade_date": current.trade_date if current else None,
                 "open": current.open if current else None,

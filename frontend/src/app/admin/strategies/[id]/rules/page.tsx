@@ -135,7 +135,7 @@ function RuleStrategyEditor({
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         breadcrumb={
           <Link href="/admin/strategies" className="hover:text-ink-700">
@@ -258,7 +258,7 @@ function RuleStrategyEditor({
  * ================================================================== */
 function DocumentStrategyEditor({ strategyId, name }: { strategyId: number; name: string }) {
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         breadcrumb={
           <Link href="/admin/strategies" className="hover:text-ink-700">

@@ -118,6 +118,15 @@ const config: Config = {
           fg: v('brand-fg'),
           soft: v('brand-soft'),
           hover: v('brand-hover'),
+          /**
+           * Cực thứ hai của mọi dải chuyển màu thương hiệu (`from-brand to-brand-2`).
+           *
+           * Lệch sắc độ sang tím chứ không chỉ đậm/nhạt hơn: một dải xanh sang xanh đậm hơn
+           * đọc ra là lỗi nén ảnh, phải đổi cả sắc thì mắt mới nhận ra đó là chuyển màu có
+           * chủ đích. Chỉ dùng cho **dải màu**, không bao giờ dùng làm màu nền phẳng — nếu
+           * không thì site có hai màu thương hiệu và mất luôn dấu hiệu nhận biết.
+           */
+          2: v('brand-2'),
         },
 
         /** Sắc thái mang thông tin — nhãn trạng thái, hộp cảnh báo, chữ lỗi. */

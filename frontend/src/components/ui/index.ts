@@ -24,3 +24,4 @@ export { Pagination } from './Pagination';
 export { Tooltip, RowAction } from './Tooltip';
 export { Tabs, TabPanel, type TabItem } from './Tabs';
 export { ToggleGroup } from './ToggleGroup';
+export { ThemeToggle, ThemeSegmented } from './ThemeToggle';

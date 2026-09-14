@@ -21,13 +21,34 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, CreatedAtMixin, IdMixin, TimestampMixin
 
 
+#: Cổ phiếu niêm yết — phần áp đảo của danh mục.
+ASSET_STOCK = "STOCK"
+#: Hợp đồng tương lai chỉ số (VN30F1M, VN30F2M…). Xem `Symbol.asset_class`.
+ASSET_DERIVATIVE = "DERIVATIVE"
+
+
 class Symbol(Base, IdMixin, TimestampMixin):
-    """Danh mục mã chứng khoán niêm yết."""
+    """Danh mục mã đang theo dõi — cổ phiếu niêm yết và hợp đồng phái sinh."""
 
     __tablename__ = "symbols"
 
     symbol: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     exchange: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # HOSE|HNX|UPCOM
+
+    #: `STOCK` hay `DERIVATIVE`. Là một cột riêng chứ không phải một giá trị nữa của `exchange`.
+    #:
+    #: Nhét "DERIVATIVE" vào `exchange` thì gọn hơn đúng một cột, và hỏng ở chỗ phái sinh **vẫn
+    #: niêm yết trên HNX**: gộp hai thứ vào một trường là vứt mất sàn thật của hợp đồng, và mọi
+    #: câu lọc theo sàn về sau phải nhớ trừ ra một giá trị không phải sàn. Hai câu hỏi khác nhau
+    #: ("loại tài sản gì" và "niêm yết ở đâu") thì hai cột.
+    #:
+    #: Quan trọng hơn: cột này quyết định mã có đi qua `sync_symbols` hay không. Danh mục cổ
+    #: phiếu do SSI iBoard xác nhận còn niêm yết hay không; phái sinh **không nằm trong danh
+    #: sách đó**, nên nếu không tách ra thì mỗi lần đồng bộ danh mục là bốn hợp đồng bị đánh dấu
+    #: huỷ niêm yết và lặng lẽ biến mất khỏi bảng giá.
+    asset_class: Mapped[str] = mapped_column(
+        String(12), nullable=False, default=ASSET_STOCK, server_default=ASSET_STOCK, index=True
+    )
     company_name: Mapped[str | None] = mapped_column(String(255))
     company_name_en: Mapped[str | None] = mapped_column(String(255))
     #: Ngành nghề — bổ sung sau khi có nguồn phân ngành.
@@ -41,7 +62,11 @@ class Symbol(Base, IdMixin, TimestampMixin):
     last_ohlcv_date: Mapped[date | None] = mapped_column(Date)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    __table_args__ = (Index("ix_symbol_exchange_active", "exchange", "is_active"),)
+    __table_args__ = (
+        Index("ix_symbol_exchange_active", "exchange", "is_active"),
+        # Bảng giá luôn lọc theo đúng cặp này: loại tài sản trước, rồi mới tới còn niêm yết.
+        Index("ix_symbol_asset_active", "asset_class", "is_active"),
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Symbol {self.symbol} {self.exchange}>"

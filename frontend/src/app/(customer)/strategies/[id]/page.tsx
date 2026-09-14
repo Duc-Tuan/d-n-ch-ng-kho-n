@@ -92,7 +92,7 @@ export default function StrategyDetailPage() {
 
   if (error instanceof ApiError && error.code === 'PACKAGE_TOO_LOW') {
     return (
-      <div className="space-y-5">
+      <div className="space-y-5 pb-6">
         <PageHeader title="Chiến lược" />
         <LockedContent
           title="Chiến lược thuộc gói cao hơn"
@@ -109,7 +109,7 @@ export default function StrategyDetailPage() {
   const signals = markers?.signals ?? [];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <PageHeader
         breadcrumb={
           <Link href="/strategies" className="hover:text-ink-700">
@@ -500,7 +500,7 @@ function QuestionList({ strategyId, onAsk }: { strategyId: number; onAsk: () => 
   });
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       <Card>
         <CardHeader
           title="Câu hỏi của bạn"

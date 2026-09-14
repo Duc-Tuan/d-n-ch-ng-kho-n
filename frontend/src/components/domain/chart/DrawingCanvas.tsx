@@ -23,6 +23,7 @@ import { findDrawingAt } from '@/lib/drawings/hitTest';
 import { drawDrawing, type Pixel, type RenderPalette } from '@/lib/drawings/renderer';
 import { SYMBOL_TOKEN, TOOL_META, type Drawing, type Point } from '@/lib/drawings/types';
 import type { Candle } from '@/lib/indicators/math';
+import { useResolvedTheme } from '@/hooks';
 
 import { isChartLive } from './chartLifecycle';
 import { chartColor, down, up } from './chartTheme';
@@ -79,7 +80,7 @@ interface PendingText {
   point: Point;
 }
 
-/** Màu đọc lúc chạy từ biến CSS — site khách nền tối, site quản trị nền sáng. */
+/** Màu đọc lúc chạy từ biến CSS: bảng màu do người dùng chọn nên chỉ biết được lúc vẽ. */
 function palette(): RenderPalette {
   return {
     labelBg: chartColor('surface', '255 255 255', 0.85),
@@ -115,6 +116,7 @@ export function DrawingCanvas({
   sizeRef.current = { width, height };
 
   const { activeTool, drawings, selectedId, hideAll, lockAll } = store;
+  const theme = useResolvedTheme();
 
   const getMapper = useCallback(() => {
     // Cùng lý do như `ShapesLayer`: biểu đồ đã gỡ vẫn còn nguyên handle trong prop.
@@ -224,10 +226,22 @@ export function DrawingCanvas({
     return () => timeScale.unsubscribeVisibleLogicalRangeChange(onRangeChange);
   }, [chart, render]);
 
-  // Vẽ lại khi dữ liệu, kích thước hay trạng thái đổi.
+  // Vẽ lại khi dữ liệu, kích thước, trạng thái — hoặc bảng màu — đổi. Nhãn của hình vẽ đọc
+  // màu từ `:root` lúc vẽ, nên thiếu `theme` thì chúng giữ màu của bảng màu cũ.
   useEffect(() => {
     render();
-  }, [render, drawings, activeTool, selectedId, hideAll, lockAll, candles, width, height]);
+  }, [
+    render,
+    drawings,
+    activeTool,
+    selectedId,
+    hideAll,
+    lockAll,
+    candles,
+    width,
+    height,
+    theme,
+  ]);
 
   /* ── Sự kiện con trỏ ──────────────────────────────────────────────────── */
 

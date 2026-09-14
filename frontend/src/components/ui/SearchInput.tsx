@@ -71,8 +71,17 @@ export function SearchInput({
   return (
     <div className={cn('space-y-1.5', className)}>
       {label && <label className="block text-sm font-medium text-ink-700">{label}</label>}
-      <div className="relative">
-        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-ink-400">
+      {/*
+        Vòng sáng focus đặt trên **lớp bọc**, không trên ô nhập.
+
+        `globals.css` cố ý xoá mọi dấu hiệu focus của `input` (kể cả `box-shadow`) theo yêu cầu
+        thiết kế của biểu mẫu. Nhưng một ô **tìm kiếm** thì khác một ô nhập biểu mẫu: nó là thứ
+        người dùng nhảy vào bằng bàn phím giữa lúc đang đọc, và không có dấu hiệu nào thì họ gõ
+        vào hư không. Đặt hiệu ứng ở thẻ `div` bao ngoài là cách giữ được cả hai: quy tắc kia
+        chỉ nhắm vào `input`, nên nó không đụng tới chỗ này.
+      */}
+      <div className="relative rounded-xl transition-shadow focus-within:shadow-[0_0_0_3px_rgb(var(--brand)/0.15)]">
+        <span className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-ink-400">
           <Icon name="search" size={16} />
         </span>
         <input
@@ -90,9 +99,11 @@ export function SearchInput({
           }}
           placeholder={placeholder}
           className={cn(
-            'h-touch w-full rounded-lg border border-line-strong bg-surface pl-9 pr-9 text-base text-ink-900',
-            // Cùng quy ước với `Input`: không có dấu hiệu focus trực quan.
-            'placeholder:text-ink-400 transition-colors hover:border-ink-400 focus:outline-none',
+            'h-11 w-full rounded-xl border border-line bg-surface pl-10 pr-9 text-base text-ink-900',
+            'placeholder:text-ink-400 transition-colors hover:border-line-strong',
+            // Viền đổi màu khi focus. `outline`/`box-shadow` bị `globals.css` chặn trên `input`,
+            // còn `border-color` thì không — vòng sáng do lớp bọc bên ngoài lo.
+            'focus:border-brand focus:outline-none',
             'sm:text-sm',
             // Ẩn nút xoá mặc định của trình duyệt để dùng nút của mình cho đồng nhất.
             '[&::-webkit-search-cancel-button]:hidden',

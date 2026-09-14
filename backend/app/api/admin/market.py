@@ -169,6 +169,9 @@ def list_symbols(
                 "id": row.id,
                 "symbol": row.symbol,
                 "exchange": row.exchange,
+                # Không có trường này thì VN30F1M nằm lẫn giữa danh sách cổ phiếu HNX và nhân
+                # viên vận hành không có cách nào biết vì sao nó không theo `sync_symbols`.
+                "asset_class": row.asset_class,
                 "company_name": row.company_name,
                 "industry": row.industry,
                 "tier": row.tier,

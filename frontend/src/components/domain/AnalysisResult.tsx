@@ -210,7 +210,7 @@ export function AnalysisResult({
   }
 
   return (
-    <Card className="space-y-5">
+    <Card className="space-y-5 pb-6">
       <div>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <StatusBadge map={ANALYSIS_STATUS} code={analysis.status} />

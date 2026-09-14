@@ -24,7 +24,7 @@ import {
 } from 'lightweight-charts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { useIsMobile } from '@/hooks';
+import { useIsMobile, useResolvedTheme } from '@/hooks';
 import { cn } from '@/lib/cn';
 import { formatDateTime } from '@/lib/datetime';
 import { formatNumber, formatR } from '@/lib/format';
@@ -117,6 +117,7 @@ export function StrategyChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const isMobile = useIsMobile();
+  const theme = useResolvedTheme();
 
   const [activeSignal, setActiveSignal] = useState<Signal | null>(null);
 
@@ -209,6 +210,35 @@ export function StrategyChart({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height, isMobile]);
+
+  /**
+   * Đổi bảng màu khi người dùng bấm nút sáng/tối.
+   *
+   * Biểu đồ vẽ lên canvas nên màu của nó là một bản sao chụp lúc dựng, không đi theo biến CSS
+   * như phần giao diện còn lại. Không có effect này thì đổi sang nền sáng để lại một ô biểu đồ
+   * đen giữa trang trắng cho tới lần tải lại trang.
+   *
+   * `applyOptions` chứ không dựng lại: dựng lại làm mất vùng nhìn và mọi marker đang chọn.
+   */
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const next = chartColors();
+    const palette = colors();
+    chart.applyOptions({
+      layout: { background: { type: ColorType.Solid, color: next.background }, textColor: next.text },
+      grid: { vertLines: { color: next.grid }, horzLines: { color: next.grid } },
+      rightPriceScale: { borderColor: next.border },
+      timeScale: { borderColor: next.border },
+    });
+    seriesRef.current?.applyOptions({
+      upColor: palette.liveBuy,
+      downColor: palette.liveSell,
+      wickUpColor: palette.liveBuy,
+      wickDownColor: palette.liveSell,
+    });
+  }, [theme]);
 
   // Cập nhật dữ liệu nến.
   useEffect(() => {
