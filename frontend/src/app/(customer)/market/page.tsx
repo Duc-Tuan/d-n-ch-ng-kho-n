@@ -208,12 +208,30 @@ export default function MarketPage() {
    */
   const liveQuote = quotes[selected];
   const chartCandles = useMemo<Candle[]>(
-    () => withLiveQuote(ohlcv?.candles ?? [], liveQuote),
-    [ohlcv?.candles, liveQuote],
+    // Chuỗi nến chưa về thì **không** phủ gói tin lên mảng rỗng: `withLiveQuote` sẽ dựng đúng
+    // một cây nến từ gói tin ấy, và một biểu đồ một cây nến chớp lên giữa hai mã trông như dữ
+    // liệu hỏng chứ không như đang tải.
+    () => (ohlcv ? withLiveQuote(ohlcv.candles ?? [], liveQuote) : []),
+    [ohlcv, liveQuote],
   );
   const lastCandle = chartCandles[chartCandles.length - 1];
 
   const defaultSymbol = assetClass === 'DERIVATIVE' ? DEFAULT_DERIVATIVE : DEFAULT_STOCK;
+
+  /**
+   * Chọn mã từ ô chọn trên biểu đồ (lúc phóng to kín màn hình), kèm loại tài sản của nó.
+   *
+   * Bảng giá bên trái phải đi theo: chọn `VN30F1M` trong khi tab đang là Chứng khoán rồi thu
+   * nhỏ lại sẽ cho một bảng cổ phiếu đứng cạnh biểu đồ một hợp đồng phái sinh, và dòng đang
+   * chọn thì không nằm trong bảng.
+   *
+   * Khác `changeAssetClass` ở chỗ **không** kéo mã về mã mặc định của tab: mã ở đây là do người
+   * dùng vừa chỉ đích danh.
+   */
+  function selectSymbol(symbol: string, asset?: AssetClass) {
+    setSelected(symbol);
+    if (asset && asset !== assetClass) setAssetClass(asset);
+  }
 
   /**
    * Đổi tab thì biểu đồ đi theo.
@@ -455,29 +473,27 @@ export default function MarketPage() {
               ) : null}
             </div>
 
-            {chartLoading ? (
-              <div className="py-20">
-                <Spinner label="Đang tải biểu đồ…" />
-              </div>
-            ) : !chartCandles.length ? (
-              <EmptyState
-                title={`Chưa có dữ liệu giá cho ${selected}`}
-                description="Mã này chưa được đồng bộ hoặc chưa phát sinh giao dịch."
-              />
-            ) : (
-              <PriceChart
-                symbol={selected}
-                candles={chartCandles}
-                tzOffsetSeconds={ohlcv?.tz_offset_seconds ?? 0}
-                indicators={indicators}
-                attribution={ohlcv?.attribution}
-                height={420}
-                onExpandedChange={setChartExpanded}
-                onSymbolChange={setSelected}
-                // Phóng to kín màn hình thì lớp phủ che mất mọi thứ bên dưới. Đưa phần phân tích
-                // sang cột phải để vẫn đọc được nhận định cùng lúc với biểu đồ — chính lúc bung
-                // hết cỡ mới là lúc người dùng soi kỹ và cần đối chiếu.
-                sidePanel={
+            {/* Biểu đồ dựng **một lần** rồi ở nguyên đó, kể cả lúc đang nạp mã khác hay mã
+                không có dữ liệu — hai trạng thái ấy là lớp phủ bên trong biểu đồ (xem
+                `loading` ở `PriceChart`). Trước đây chỗ này thay biểu đồ bằng khối chờ mỗi lần
+                đổi mã, mà thay là gỡ khỏi cây: ai đang phóng to kín màn hình rồi chọn mã khác
+                thì bị hất về cột hẹp ngay giữa chừng. */}
+            <PriceChart
+              symbol={selected}
+              candles={chartCandles}
+              tzOffsetSeconds={ohlcv?.tz_offset_seconds ?? 0}
+              indicators={indicators}
+              attribution={ohlcv?.attribution}
+              height={420}
+              loading={chartLoading}
+              assetClass={assetClass}
+              onExpandedChange={setChartExpanded}
+              onSymbolChange={selectSymbol}
+              // Phóng to kín màn hình thì lớp phủ che mất mọi thứ bên dưới. Đưa phần phân tích
+              // sang cột phải để vẫn đọc được nhận định cùng lúc với biểu đồ — chính lúc bung
+              // hết cỡ mới là lúc người dùng soi kỹ và cần đối chiếu.
+              sidePanel={
+                chartCandles.length > 0 ? (
                   <div className="space-y-3">
                     {/* `dense` cứng ở đây chứ không lấy theo `chartExpanded`: khối này chỉ được
                         dựng khi đang phóng to (xem `PriceChart`), nên nó luôn ở cột hẹp. */}
@@ -489,9 +505,9 @@ export default function MarketPage() {
                     />
                     <PriceSummary candles={chartCandles} />
                   </div>
-                }
-              />
-            )}
+                ) : null
+              }
+            />
           </Card>
 
           {/* Đang phóng to thì hai khối này đã nằm ở cột phải của lớp phủ — xem `sidePanel`. */}

@@ -32,7 +32,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { SymbolCombobox } from '@/components/domain/SymbolCombobox';
-import { Button, Icon, IconButton } from '@/components/ui';
+import { Button, Icon, IconButton, Spinner } from '@/components/ui';
 import { useIsMobile, useResolvedTheme } from '@/hooks';
 import { CUSTOMER, api } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -45,7 +45,7 @@ import type {
   PlotDef,
 } from '@/lib/indicators/types';
 import { toIndicatorCandles } from '@/lib/indicators/snapshot';
-import type { Candle, OhlcvResponse } from '@/types';
+import type { AssetClass, Candle, OhlcvResponse } from '@/types';
 
 import { removeChart } from './chart/chartLifecycle';
 import { LINE_STYLE_MAP, baseChartOptions, down, up } from './chart/chartTheme';
@@ -122,6 +122,8 @@ export function PriceChart({
   height = 420,
   attribution,
   sidePanel,
+  loading = false,
+  assetClass,
   onExpandedChange,
   onSymbolChange,
 }: {
@@ -159,11 +161,24 @@ export function PriceChart({
    */
   onExpandedChange?: (expanded: boolean) => void;
   /**
+   * Màn cha đang nạp chuỗi nến cho mã vừa chọn.
+   *
+   * Phải là **một lớp phủ bên trong biểu đồ**, không phải một khối chờ dựng thay cho biểu đồ ở
+   * màn cha: gỡ biểu đồ ra khỏi cây là mất luôn mọi trạng thái nó đang giữ — trong đó có cờ
+   * phóng to kín màn hình. Người dùng bung hết cỡ rồi đổi mã sẽ bị hất về lại cột hẹp, và đó
+   * chính là lỗi cần chữa ở đây.
+   */
+  loading?: boolean;
+  /** Loại tài sản của mã đang xem — để ô chọn mã lúc phóng to mở đúng tab. */
+  assetClass?: AssetClass;
+  /**
    * Đổi mã ngay trên biểu đồ. Chỉ dùng khi phóng to kín màn hình — lúc đó lớp phủ che mất bảng
    * giá, và bảng giá là chỗ duy nhất đổi mã được; không có nút này thì muốn xem mã khác phải
    * thoát ra, bấm, rồi phóng to lại.
+   *
+   * Tham số thứ hai là loại tài sản của mã mới, để màn cha đổi tab bảng giá theo.
    */
-  onSymbolChange?: (symbol: string) => void;
+  onSymbolChange?: (symbol: string, assetClass?: AssetClass) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -807,7 +822,13 @@ export function PriceChart({
           {expanded && symbol && (
             onSymbolChange ? (
               <div className="mr-2 w-40 sm:w-52">
-                <SymbolCombobox value={symbol} onChange={onSymbolChange} label="" />
+                <SymbolCombobox
+                  value={symbol}
+                  onChange={(next, info) => onSymbolChange(next, info?.asset_class)}
+                  label=""
+                  assetClass={assetClass}
+                  assetTabs
+                />
               </div>
             ) : (
               <span className="mr-2 text-base font-semibold text-ink-900">{symbol}</span>
@@ -928,6 +949,31 @@ export function PriceChart({
               style={expanded ? undefined : { minHeight: height }}
             >
               <div ref={containerRef} className="absolute inset-0" />
+
+              {/* Lớp chờ và lớp "chưa có dữ liệu" nằm **đè lên** biểu đồ chứ không thay chỗ nó.
+                  Thay chỗ nghĩa là gỡ biểu đồ khỏi cây mỗi lần đổi mã, và cùng với nó là cờ
+                  phóng to kín màn hình, khung thời gian, vùng nhìn đang cuộn tới. `switching`
+                  là lượt nạp của chính biểu đồ khi đổi khung, `loading` là lượt nạp của màn cha
+                  khi đổi mã — với người nhìn thì cả hai đều là "đang lấy chuỗi nến khác". */}
+              {loading || switching ? (
+                <div
+                  data-chart-ui
+                  className="absolute inset-0 z-20 flex items-center justify-center bg-surface/70"
+                >
+                  <Spinner label="Đang tải biểu đồ…" />
+                </div>
+              ) : !candles.length ? (
+                <div
+                  data-chart-ui
+                  className="absolute inset-0 z-20 flex items-center justify-center bg-surface/70 px-6 text-center"
+                >
+                  <p className="text-sm text-ink-500">
+                    {symbol
+                      ? `Chưa có dữ liệu giá cho ${symbol} ở khung này.`
+                      : 'Chưa có dữ liệu giá.'}
+                  </p>
+                </div>
+              ) : null}
 
               {/* Nhãn các chỉ báo vẽ đè: tên, và nút chỉnh ngay tại chỗ đang nhìn thấy đường đó. */}
               {indicators.overlays.length > 0 && (
