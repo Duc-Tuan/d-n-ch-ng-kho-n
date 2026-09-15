@@ -1095,10 +1095,16 @@ export function PriceChart({
 
           Kèm luôn ghi công thư viện vẽ: logo TradingView đã tắt ở `chartTheme` vì nó nổi đè lên
           góc dưới phải, đúng chỗ nến mới nhất. Giấy phép Apache-2.0 đòi giữ phần ghi công chứ
-          không đòi giữ đúng cái logo — nên nó chuyển xuống đây thành một dòng chữ. */}
-      <p className="text-xs text-ink-500">
-        {attribution ? `${attribution} · ` : ''}
-      </p>
+          không đòi giữ đúng cái logo — nên nó chuyển xuống đây thành một dòng chữ.
+
+          Gỡ đi khi phóng to kín màn hình: mọi thứ trong lớp phủ chia nhau đúng một khung nhìn,
+          và dòng này ăn mất một dải ngang của phần nến — chỗ duy nhất người dùng bung hết cỡ để
+          nhìn. Nguồn dữ liệu vẫn còn nguyên dưới biểu đồ ngay khi thu nhỏ lại. */}
+      {!expanded && (
+        <p className="text-xs text-ink-500">
+          {attribution ? `${attribution} · ` : ''}
+        </p>
+      )}
 
       <IndicatorsModal
         open={pickerOpen}
