@@ -29,11 +29,19 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 
 import { SymbolCombobox } from '@/components/domain/SymbolCombobox';
 import { Button, Icon, IconButton, Spinner } from '@/components/ui';
-import { useIsMobile, useResolvedTheme } from '@/hooks';
+import { useIsMobile, useLocalStorage, useMediaQuery, useResolvedTheme } from '@/hooks';
 import { CUSTOMER, api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import type { Candle as IndicatorCandle } from '@/lib/indicators/math';
@@ -48,7 +56,13 @@ import { toIndicatorCandles } from '@/lib/indicators/snapshot';
 import type { AssetClass, Candle, OhlcvResponse } from '@/types';
 
 import { removeChart } from './chart/chartLifecycle';
-import { LINE_STYLE_MAP, baseChartOptions, down, up } from './chart/chartTheme';
+import {
+  LINE_STYLE_MAP,
+  TIME_SCALE_RIGHT_OFFSET,
+  baseChartOptions,
+  down,
+  up,
+} from './chart/chartTheme';
 import { DrawingCanvas } from './chart/DrawingCanvas';
 import { DrawingStyleBar } from './chart/DrawingStyleBar';
 import { DrawingToolbar } from './chart/DrawingToolbar';
@@ -113,6 +127,37 @@ const INITIAL_SIZE = 500;
 
 /** Chiều cao một cửa sổ chỉ báo. Đủ để đọc RSI, không lấn quá nhiều phần nến. */
 const PANE_HEIGHT = 120;
+
+/* ── Bề rộng hai cột lúc phóng to kín màn hình ────────────────────────────
+     Trước đây cột phân tích cố định `lg:w-[26rem] xl:w-[30rem]`, tức mọi người cùng một tỉ lệ.
+     Nhưng "bung hết cỡ để soi kỹ" có hai kiểu ngược nhau: người đọc nến muốn dồn hết bề ngang
+     cho biểu đồ, người đối chiếu nhận định muốn bảng phân tích đủ rộng để không phải cuộn. Một
+     con số chọn sẵn luôn sai với một trong hai bên, nên nó thành thứ kéo được — và nhớ lại ở
+     lần mở sau, vì tỉ lệ này là thói quen đọc chứ không phải lựa chọn của một lần xem. */
+
+const SIDE_WIDTH_KEY = 'market.chart.side-width';
+
+/** Đúng bằng `26rem` cũ, để lần mở đầu tiên không khác gì bản trước. */
+const SIDE_WIDTH_DEFAULT = 416;
+
+/** Hẹp hơn mức này thì bảng phân tích gãy dòng liên tục, còn biểu đồ thì hết là biểu đồ. */
+const SIDE_WIDTH_MIN = 288;
+const CHART_WIDTH_MIN = 360;
+
+/** Bước nhảy khi chỉnh bằng bàn phím — xem `SplitHandle`. */
+const SIDE_WIDTH_STEP = 24;
+
+/**
+ * Giữ bề rộng cột phân tích trong khoảng dùng được với bề ngang đang có.
+ *
+ * Cần cả lúc kéo lẫn lúc cửa sổ đổi kích thước: một bề rộng chốt từ màn 27 inch mà mở lại trên
+ * laptop 13 inch sẽ chiếm gần hết khung nhìn, và phần còn lại cho biểu đồ hẹp hơn cả cột bảng
+ * giá mà người dùng vừa thoát khỏi.
+ */
+function clampSideWidth(next: number, containerWidth: number): number {
+  const max = Math.max(SIDE_WIDTH_MIN, containerWidth - CHART_WIDTH_MIN);
+  return Math.round(Math.min(Math.max(next, SIDE_WIDTH_MIN), max));
+}
 
 export function PriceChart({
   symbol,
@@ -187,14 +232,29 @@ export function PriceChart({
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   /** `instanceId__plotKey` → đường của chỉ báo vẽ đè, để cập nhật và gỡ đúng cái. */
   const overlaySeriesRef = useRef<Map<string, ISeriesApi<SeriesType>>>(new Map());
+  /** Hàng "biểu đồ + cột phân tích" lúc phóng to — mốc quy toạ độ chuột ra bề rộng khi kéo. */
+  const splitRef = useRef<HTMLDivElement>(null);
 
   const isMobile = useIsMobile();
   // Biểu đồ vẽ lên canvas nên phải tự biết bảng màu đang là gì — xem effect đổi màu bên dưới.
   const theme = useResolvedTheme();
   const size = useElementSize(hostRef);
+  // Đúng breakpoint `lg` của hàng bên dưới: hẹp hơn thì hai khối xếp dọc, và kéo ngang không còn
+  // nghĩa gì.
+  const wide = useMediaQuery('(min-width: 1024px)');
 
   const [range, setRange] = useState('1y');
   const [expanded, setExpanded] = useState(false);
+
+  /**
+   * Bề rộng cột phân tích, và bề rộng *đang* kéo dở.
+   *
+   * Hai biến chứ không một: `sideWidth` ghi xuống localStorage mỗi lần đổi, mà một nhịp kéo chuột
+   * sinh ra vài chục lần đổi — ghi từng nhịp là vài chục lượt ghi đĩa cho một thao tác. `dragWidth`
+   * giữ phần kéo dở trong bộ nhớ, thả tay mới chốt lại.
+   */
+  const [sideWidth, setSideWidth] = useLocalStorage(SIDE_WIDTH_KEY, SIDE_WIDTH_DEFAULT);
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
   const [candles, setCandles] = useState<Candle[]>(initialCandles);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
@@ -343,6 +403,39 @@ export function PriceChart({
   useEffect(() => {
     onExpandedChange?.(expanded);
   }, [expanded, onExpandedChange]);
+
+  /**
+   * Hai cột nằm cạnh nhau — điều kiện duy nhất mà thanh kéo có nghĩa.
+   *
+   * Thiếu `sidePanel` thì lớp phủ chỉ có biểu đồ (không có gì để chia), và dưới `lg` thì hàng xếp
+   * dọc nên thứ chia nhau là chiều cao chứ không phải bề ngang.
+   */
+  const split = expanded && Boolean(sidePanel) && wide;
+  const sideWidthPx = dragWidth ?? sideWidth;
+
+  // Thoát phóng to giữa lúc đang kéo (Esc, hoặc cửa sổ hẹp lại dưới `lg`) thì bỏ bề rộng kéo dở:
+  // giữ lại thì lần bung ra sau mở bằng một con số chưa bao giờ được chốt, khác với thứ đã lưu.
+  useEffect(() => {
+    if (!split) setDragWidth(null);
+  }, [split]);
+
+  // Bề rộng đã chốt có thể quá rộng với khung nhìn hiện tại — xem `clampSideWidth`.
+  useEffect(() => {
+    if (!split) return;
+
+    const fit = () => {
+      const host = splitRef.current;
+      if (!host) return;
+      // `setSideWidth` của `useLocalStorage` chỉ nhận giá trị, không nhận hàm cập nhật — nên so
+      // trước rồi mới ghi, để một lần đổi kích thước cửa sổ không sinh ra một lượt ghi đĩa thừa.
+      const next = clampSideWidth(sideWidth, host.clientWidth);
+      if (next !== sideWidth) setSideWidth(next);
+    };
+
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [split, sideWidth, setSideWidth]);
 
   // Khoá cuộn nền: lớp phủ che kín rồi, để trang phía sau cuộn được chỉ gây trôi vị trí khi thoát.
   useEffect(() => {
@@ -705,12 +798,30 @@ export function PriceChart({
       return;
     }
 
-    const grew = bars.length > previousCount.current && previousCount.current > 0;
+    /* Đổi mã (hay đổi khung) là **một chuỗi khác**, không phải chuỗi cũ vừa dài thêm ra.
+
+       Không phân biệt hai chuyện này thì mã mới thừa hưởng vùng nhìn của mã cũ, và đó là thứ
+       người dùng thấy: đang giãn nến để soi một đoạn giữa năm ngoái của AAA, bấm sang MSN vẫn
+       đứng nguyên chỗ ấy với đúng độ giãn ấy, thay vì mở ra khoảng đang chọn của mã mới. Giữ
+       vùng nhìn chỉ đúng với **cùng một chuỗi dài thêm về quá khứ** — xem nhánh `savedRange`. */
+    const sameSeries = applied.key === seriesKey;
+    const grew = sameSeries && bars.length > previousCount.current && previousCount.current > 0;
     const savedRange = grew ? chartRef.current?.timeScale().getVisibleLogicalRange() : null;
     const added = bars.length - previousCount.current;
 
     priceRef.current.setData(bars);
     volumeRef.current?.setData(volumes);
+
+    /* Trục giá cũng phải về mặc định cùng lúc.
+
+       Kéo biểu đồ lên xuống hay giãn trục giá đều **tắt tự canh** của trục ấy, và mức giá đó là
+       của mã cũ: AAA vài nghìn đồng, MSN vài chục nghìn — giữ lại thì mã mới vẽ ra ngoài khung
+       nhìn, nhìn như không có dữ liệu. `rightOffset` trả về mặc định của chủ đề vì cuộn ngang
+       cũng đẩy nó đi. */
+    if (!sameSeries) {
+      chartRef.current?.priceScale('right').applyOptions({ autoScale: true });
+      chartRef.current?.timeScale().applyOptions({ rightOffset: TIME_SCALE_RIGHT_OFFSET });
+    }
 
     if (savedRange && added > 0) {
       chartRef.current?.timeScale().setVisibleLogicalRange({
@@ -718,7 +829,8 @@ export function PriceChart({
         to: savedRange.to + added,
       });
     } else if (!grew) {
-      // Lần vẽ đầu, và mỗi lần đổi khoảng: số nến không tăng nên nhánh này chạy.
+      // Lần vẽ đầu, mỗi lần đổi khoảng, và mỗi lần đổi sang chuỗi khác: nhánh này đặt lại vùng
+      // nhìn về đúng khoảng đang chọn.
       applyRange(bars.length);
     }
 
@@ -927,7 +1039,10 @@ export function PriceChart({
 
       {/* Phóng to kín màn hình: biểu đồ và cột phân tích nằm cạnh nhau từ `lg` trở lên. Màn hẹp
           hơn thì xếp dọc — nhét cả hai vào bề ngang điện thoại chỉ làm cả hai đều chật. */}
-      <div className={cn('flex min-h-0 flex-col gap-3', expanded && 'flex-1 lg:flex-row')}>
+      <div
+        ref={splitRef}
+        className={cn('flex min-h-0 flex-col gap-3', expanded && 'flex-1 lg:flex-row lg:gap-0')}
+      >
         <div
           className={cn(
             'flex flex-col overflow-hidden rounded-lg border border-ink-200 md:flex-row',
@@ -1083,9 +1198,33 @@ export function PriceChart({
           </div>
         </div>
 
-        {/* Cột phân tích chỉ dựng khi đang phóng to: lúc thu nhỏ nó đã nằm sẵn trong trang. */}
+        {/* Thanh kéo chia bề ngang. Chỉ có ở bố cục hai cột — xem `split`. */}
+        {split && (
+          <SplitHandle
+            hostRef={splitRef}
+            width={sideWidthPx}
+            onDrag={setDragWidth}
+            onCommit={(next) => {
+              setSideWidth(next);
+              setDragWidth(null);
+            }}
+          />
+        )}
+
+        {/* Cột phân tích chỉ dựng khi đang phóng to: lúc thu nhỏ nó đã nằm sẵn trong trang.
+
+            Bề rộng đặt bằng `style` chứ không bằng lớp Tailwind vì nó là một con số tuỳ ý người
+            dùng kéo tới, không phải một trong dăm bảy bậc dựng sẵn. Chỉ đặt ở bố cục hai cột: khi
+            hàng xếp dọc, một bề rộng cứng sẽ cắt cụt khối phân tích theo bề ngang màn hẹp. */}
         {expanded && sidePanel && (
-          <aside className="min-h-0 shrink-0 overflow-y-auto lg:w-[26rem] xl:w-[30rem]">
+          <aside
+            className={cn(
+              'min-h-0 shrink-0 overflow-y-auto',
+              // Không có thanh kéo (màn hẹp) thì cột nằm dưới và rộng hết hàng.
+              !split && 'w-full',
+            )}
+            style={split ? { width: sideWidthPx } : undefined}
+          >
             {sidePanel}
           </aside>
         )}
@@ -1120,6 +1259,104 @@ export function PriceChart({
         onClose={() => setSettingsId(null)}
         onApplyParams={indicators.setParams}
         onPatchStyle={indicators.setStyle}
+      />
+    </div>
+  );
+}
+
+/**
+ * Thanh kéo chia bề ngang giữa biểu đồ và cột phân tích lúc phóng to kín màn hình.
+ *
+ * Bắt bằng **pointer event + `setPointerCapture`** chứ không phải `mousedown` rồi nghe `mousemove`
+ * trên `window`: kéo nhanh thì con trỏ rời khỏi thanh trước khi trình duyệt kịp gửi sự kiện, và
+ * khi nó đi ngang qua canvas của biểu đồ thì chính biểu đồ nuốt mất sự kiện — kéo được một đoạn
+ * rồi tự nhiên "rơi" tay. Pointer capture khoá cả chuỗi sự kiện về đúng thanh này cho tới lúc thả,
+ * và bao luôn cả màn cảm ứng.
+ *
+ * Vùng bắt tay rộng hơn hẳn vạch kẻ nhìn thấy (`px-1.5` quanh một vạch 1px): một mục tiêu 1px là
+ * thứ người dùng phải nhắm, còn ~14px thì chỉ cần đưa chuột tới.
+ */
+function SplitHandle({
+  hostRef,
+  width,
+  onDrag,
+  onCommit,
+}: {
+  hostRef: RefObject<HTMLDivElement | null>;
+  width: number;
+  onDrag: (next: number) => void;
+  onCommit: (next: number) => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+
+  /** Toạ độ chuột → bề rộng cột phải: đo ngược từ mép phải của hàng. */
+  const widthAt = useCallback(
+    (clientX: number) => {
+      const host = hostRef.current;
+      if (!host) return width;
+      const rect = host.getBoundingClientRect();
+      return clampSideWidth(rect.right - clientX, rect.width);
+    },
+    [hostRef, width],
+  );
+
+  /** Chỉnh bằng bàn phím — thanh kéo là một điều khiển thật, không chỉ là vạch để rê chuột. */
+  function nudge(delta: number) {
+    const host = hostRef.current;
+    onCommit(clampSideWidth(width + delta, host?.clientWidth ?? width + delta));
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Kéo để chỉnh bề rộng hai cột"
+      aria-valuenow={Math.round(width)}
+      tabIndex={0}
+      className="group relative hidden shrink-0 cursor-col-resize touch-none select-none items-center justify-center px-1.5 outline-none lg:flex"
+      onPointerDown={(event) => {
+        // Chỉ nút trái: chuột phải để dành cho menu ngữ cảnh, và bắt luôn nút giữa sẽ nuốt mất
+        // thao tác dán trên Linux.
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setDragging(true);
+      }}
+      onPointerMove={(event) => {
+        if (!dragging) return;
+        onDrag(widthAt(event.clientX));
+      }}
+      onPointerUp={(event) => {
+        if (!dragging) return;
+        setDragging(false);
+        onCommit(widthAt(event.clientX));
+      }}
+      // Pointer capture bị cắt giữa chừng (cửa sổ mất tiêu điểm, hệ điều hành thu lại) vẫn phải
+      // chốt bề rộng đang có: không chốt thì `dragWidth` treo lại ở màn cha và lần kéo sau nhảy
+      // về chỗ cũ.
+      onPointerCancel={() => {
+        if (!dragging) return;
+        setDragging(false);
+        onCommit(width);
+      }}
+      onKeyDown={(event) => {
+        // Mũi tên trái nới cột phải ra (biểu đồ hẹp lại) — vạch ngăn đi sang trái, đúng chiều
+        // người dùng bấm.
+        if (event.key === 'ArrowLeft') nudge(SIDE_WIDTH_STEP);
+        else if (event.key === 'ArrowRight') nudge(-SIDE_WIDTH_STEP);
+        else return;
+        event.preventDefault();
+      }}
+      // Bấm đúp về mặc định: kéo lỡ tay tới một bề rộng khó dùng thì đường về phải là một thao
+      // tác, không phải kéo mò ngược lại.
+      onDoubleClick={() => onCommit(SIDE_WIDTH_DEFAULT)}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          'h-full w-px rounded-full transition-colors',
+          dragging ? 'bg-brand' : 'bg-line group-hover:bg-line-strong group-focus-visible:bg-brand',
+        )}
       />
     </div>
   );

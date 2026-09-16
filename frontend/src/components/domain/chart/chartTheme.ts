@@ -101,6 +101,15 @@ function deepMerge<T extends PlainObject>(base: T, overrides: PlainObject): T {
   return out as T;
 }
 
+/**
+ * Khoảng trống chừa bên phải nến mới nhất, tính bằng nến.
+ *
+ * Xuất ra vì không chỉ lúc dựng biểu đồ mới cần: cuộn ngang đẩy con số này đi, nên lúc đổi sang
+ * mã khác phải đặt lại đúng giá trị ở đây (xem `PriceChart`). Hai chỗ ghi hai số khác nhau thì
+ * mỗi lần đổi mã nến lại nhích một ít so với lần mở đầu.
+ */
+export const TIME_SCALE_RIGHT_OFFSET = 4;
+
 export function baseChartOptions(
   overrides: DeepPartial<ChartOptions> = {},
 ): DeepPartial<ChartOptions> {
@@ -130,7 +139,11 @@ export function baseChartOptions(
       scaleMargins: { top: 0.08, bottom: 0.26 },
       minimumWidth: PRICE_SCALE_MIN_WIDTH,
     },
-    timeScale: { borderColor: colors.border, timeVisible: false, rightOffset: 4 },
+    timeScale: {
+      borderColor: colors.border,
+      timeVisible: false,
+      rightOffset: TIME_SCALE_RIGHT_OFFSET,
+    },
   };
 
   return deepMerge(base as PlainObject, overrides as PlainObject) as DeepPartial<ChartOptions>;

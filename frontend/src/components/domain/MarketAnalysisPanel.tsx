@@ -149,7 +149,7 @@ export function MarketAnalysisPanel({
       <Card>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink-900">AI phân tích {symbol}</p>
+            <p className="text-sm font-semibold text-ink-900">Hệ thống phân tích {symbol}</p>
             <p className="mt-1 text-sm text-ink-500">
               Mô hình đọc dữ liệu giá của {symbol} cùng <strong>các chỉ báo bạn đang bật</strong>{' '}
               trên biểu đồ, rồi viết nhận định.
