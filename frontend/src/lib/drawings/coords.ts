@@ -6,9 +6,14 @@
  * biết đó là nến nào, giá bao nhiêu — cùng với `barSpacing` để bắt điểm neo và ngoại suy ra
  * ngoài vùng dữ liệu.
  */
-import type { IChartApi, ISeriesApi, Logical, SeriesType } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, SeriesType } from 'lightweight-charts';
 
-import { barInterval, timeToLogical, type CoordinateMapper } from '@/lib/indicators/coords';
+import {
+  barInterval,
+  logicalToX,
+  timeToLogical,
+  type CoordinateMapper,
+} from '@/lib/indicators/coords';
 import type { Candle } from '@/lib/indicators/math';
 
 import type { Point } from './types';
@@ -61,7 +66,9 @@ export function createDrawingMapper(
 
   return {
     barSpacing,
-    toX: (time) => timeScale.logicalToCoordinate(timeToLogical(candles, time) as Logical),
+    // Qua `logicalToX`, không gọi thẳng `logicalToCoordinate`: điểm neo của hình vẽ tay hiếm khi
+    // trùng khít một cây nến của khung đang xem — xem chú thích ở đó.
+    toX: (time) => logicalToX(timeScale, timeToLogical(candles, time)),
     toY: (price) => series.priceToCoordinate(price),
     /**
      * `coordinateToLogical` trả `null` mỗi khi trục thời gian tạm thời "rỗng" — chẳng hạn ngay

@@ -122,8 +122,27 @@ function barsForRange(days: number, tfSeconds: number): number {
 const LOAD_MORE_THRESHOLD = 20;
 const LOAD_MORE_SIZE = 300;
 
-/** Số nến nạp khi đổi sang một khung khác. Rộng hơn `LOAD_MORE_SIZE` để có sẵn phần cuộn. */
+/** Số nến nạp khi đổi sang một khung khác. Sàn của `initialSizeFor`, cũng là mức dùng cho
+ *  khoảng *Tất cả* — khoảng đó không quy ra được một số nến cụ thể. */
 const INITIAL_SIZE = 500;
+
+/** Trần một lượt gọi — đúng bằng `limit` lớn nhất `/market/ohlcv` nhận. */
+const MAX_INITIAL_SIZE = 2000;
+
+/**
+ * Số nến phải nạp khi đổi khung: **đủ phủ khoảng đang chọn**, không phải một con số cố định.
+ *
+ * Nạp cứng 500 nến là đủ cho hai năm nến ngày nhưng chỉ được ~100 phiên nến 1 giờ. Đang xem
+ * *1 năm* ở khung Ngày rồi bấm sang 1 giờ thì biểu đồ lặng lẽ thu còn năm tháng: nút *1 năm*
+ * vẫn sáng mà nói sai, và mọi hình vẽ tay neo vào nửa cũ của năm — điểm neo là (thời gian, giá)
+ * nên chúng không đi theo khung — rơi ra ngoài chuỗi vừa nạp, bị xén mất ở mép trái.
+ */
+function initialSizeFor(days: number, tfSeconds: number): number {
+  const span = barsForRange(days, tfSeconds);
+  if (!span) return INITIAL_SIZE;
+  // Cộng thêm một trang để còn chỗ cuộn ngược trước khi phải gọi tiếp.
+  return Math.min(MAX_INITIAL_SIZE, Math.max(INITIAL_SIZE, span + LOAD_MORE_SIZE));
+}
 
 /** Chiều cao một cửa sổ chỉ báo. Đủ để đọc RSI, không lấn quá nhiều phần nến. */
 const PANE_HEIGHT = 120;
@@ -306,8 +325,26 @@ export function PriceChart({
   const drawings = useDrawings(symbol);
 
   // Dùng ref trong callback của biểu đồ để không phải gắn lại sự kiện mỗi lần dữ liệu đổi.
-  const stateRef = useRef({ candles, loadingMore, exhausted, symbol, timeframe, switching });
-  stateRef.current = { candles, loadingMore, exhausted, symbol, timeframe, switching };
+  const stateRef = useRef({
+    candles,
+    loadingMore,
+    exhausted,
+    symbol,
+    timeframe,
+    switching,
+    range,
+    tfSeconds,
+  });
+  stateRef.current = {
+    candles,
+    loadingMore,
+    exhausted,
+    symbol,
+    timeframe,
+    switching,
+    range,
+    tfSeconds,
+  };
 
   /**
    * Chuỗi nến đang giữ thuộc về mã nào, khung nào.
@@ -362,7 +399,13 @@ export function PriceChart({
       .get<OhlcvResponse>(`${CUSTOMER}/market/ohlcv`, {
         symbol,
         resolution: timeframe,
-        limit: INITIAL_SIZE,
+        // Đọc qua `stateRef`: khoảng đang chọn quyết định **số lượng**, không quyết định
+        // *chuỗi nào* — để nó vào danh sách phụ thuộc thì mỗi lần bấm sang khoảng khác là một
+        // lượt nạp lại từ đầu, cuốn sạch phần lịch sử đã cuộn về.
+        limit: initialSizeFor(
+          RANGES.find((item) => item.key === stateRef.current.range)?.days ?? 0,
+          stateRef.current.tfSeconds,
+        ),
       })
       .then((response) => {
         if (cancelled) return;

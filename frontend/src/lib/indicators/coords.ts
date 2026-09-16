@@ -4,10 +4,16 @@
  * Không dùng thẳng `timeScale().timeToCoordinate()`: hàm đó trả `null` với mọi mốc thời gian
  * không trùng một nến có thật, nên mọi thứ neo ra ngoài vùng dữ liệu — hộp Order Block kéo dài
  * sang phải, đường ngang chạy tới tương lai — sẽ không vẽ được. Thay vào đó quy time về **chỉ số
- * logic** (số thực, cho phép âm và vượt quá nến cuối) rồi dùng `logicalToCoordinate`, vốn ngoại
- * suy tuyến tính được.
+ * logic** (số thực, cho phép âm và vượt quá nến cuối) rồi quy sang pixel bằng `logicalToX`.
  */
-import type { IChartApi, ISeriesApi, Logical, SeriesType } from 'lightweight-charts';
+import type {
+  IChartApi,
+  ISeriesApi,
+  ITimeScaleApi,
+  Logical,
+  SeriesType,
+  Time,
+} from 'lightweight-charts';
 
 import type { Candle } from '@/lib/indicators/math';
 
@@ -51,6 +57,37 @@ export function timeToLogical(candles: Candle[], time: number): number {
   return low + fraction;
 }
 
+/**
+ * Chỉ số logic (**số thực**) → toạ độ pixel.
+ *
+ * Không gọi thẳng `timeScale.logicalToCoordinate()`: hàm đó chỉ nhận chỉ số **nguyên**. Đưa số
+ * thực vào, nó không báo lỗi và cũng không trả `null` — nó trả thẳng `0`:
+ *
+ * ```js
+ * indexToCoordinate(index) { if (isEmpty() || !isInteger(index)) return 0; ... }
+ * ```
+ *
+ * `0` là mép trái khung vẽ, nên mọi thứ neo vào một mốc thời gian **không trùng khít một cây
+ * nến** đều bị dồn về sát mép trái và co lại thành một vệt. Chuyện này xảy ra mỗi khi mốc neo
+ * và chuỗi nến đang vẽ không cùng một khung: một hình vẽ tay chốt trên nến ngày (mở lúc 00:00)
+ * rơi vào giữa hai cây nến 1 giờ, và một hộp Order Block kéo dài sang phải thì hiếm khi dừng
+ * đúng ở một cây nến.
+ *
+ * `indexToCoordinate` tuyến tính theo chỉ số, nên nội suy giữa hai chỉ số nguyên kề nhau cho ra
+ * đúng con số mà thư viện sẽ tính nếu nó nhận số thực.
+ */
+export function logicalToX(timeScale: ITimeScaleApi<Time>, logical: number): number | null {
+  const base = Math.floor(logical);
+  const left = timeScale.logicalToCoordinate(base as Logical);
+  if (left === null) return null;
+
+  const fraction = logical - base;
+  if (!fraction) return left;
+
+  const right = timeScale.logicalToCoordinate((base + 1) as Logical);
+  return right === null ? left : left + (right - left) * fraction;
+}
+
 export function createMapper(
   chart: IChartApi,
   series: ISeriesApi<SeriesType>,
@@ -58,7 +95,7 @@ export function createMapper(
 ): CoordinateMapper {
   const timeScale = chart.timeScale();
   return {
-    toX: (time) => timeScale.logicalToCoordinate(timeToLogical(candles, time) as Logical),
+    toX: (time) => logicalToX(timeScale, timeToLogical(candles, time)),
     toY: (price) => series.priceToCoordinate(price),
   };
 }
