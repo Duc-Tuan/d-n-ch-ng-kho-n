@@ -5,7 +5,7 @@
  * nhau ở mọi mức phóng to và ở mọi mã, còn khoảng cách theo giá thì không.
  */
 import type { DrawingMapper } from './coords';
-import { textBoxSize, toPixels, type Pixel } from './renderer';
+import { textBoxSize, toPixels, type Frame, type Pixel } from './renderer';
 import type { Drawing } from './types';
 
 /** Bán kính bắt điểm neo (px). Rộng hơn nét vẽ để dễ tóm bằng chuột và bằng ngón tay. */
@@ -62,7 +62,7 @@ export function hitTest(
   drawing: Drawing,
   cursor: Pixel,
   mapper: DrawingMapper,
-  canvas: { width: number; height: number },
+  frame: Frame,
 ): HitResult {
   const miss: HitResult = { handleIndex: null, body: false };
   if (!drawing.visible) return miss;
@@ -70,7 +70,7 @@ export function hitTest(
   // Ghi chú dán trên khung quy từ tỉ lệ khung, không đi qua trục thời gian — giống hệt lúc vẽ.
   let pts: Pixel[];
   if (drawing.pin) {
-    pts = [{ x: drawing.pin.x * canvas.width, y: drawing.pin.y * canvas.height }];
+    pts = [{ x: drawing.pin.x * frame.width, y: drawing.pin.y * frame.height }];
   } else {
     const pixels = toPixels(drawing.points, mapper);
     if (pixels.some((p) => p === null)) return miss;
@@ -80,7 +80,7 @@ export function hitTest(
 
   // Hình đã khoá vẫn **bắt được** để người dùng chọn rồi mở khoá — chỉ không có điểm neo để kéo.
   // Bỏ hẳn nó khỏi phép bắt thì một hình lỡ khoá là khoá vĩnh viễn, không còn cách nào chạm tới.
-  if (drawing.locked) return { handleIndex: null, body: hitBodyOf(drawing, cursor, pts, canvas) };
+  if (drawing.locked) return { handleIndex: null, body: hitBodyOf(drawing, cursor, pts, frame) };
 
   // Điểm neo được ưu tiên hơn thân hình: chạm vào chỗ chồng nhau thì người dùng muốn chỉnh hình,
   // không phải dời cả hình đi.
@@ -90,16 +90,11 @@ export function hitTest(
     }
   }
 
-  return { handleIndex: null, body: hitBodyOf(drawing, cursor, pts, canvas) };
+  return { handleIndex: null, body: hitBodyOf(drawing, cursor, pts, frame) };
 }
 
 /** Con trỏ có nằm trên **thân** hình không — phép đo riêng cho từng loại công cụ. */
-function hitBodyOf(
-  drawing: Drawing,
-  cursor: Pixel,
-  pts: Pixel[],
-  canvas: { width: number; height: number },
-): boolean {
+function hitBodyOf(drawing: Drawing, cursor: Pixel, pts: Pixel[], frame: Frame): boolean {
   switch (drawing.tool) {
     case 'trendline':
     case 'arrow':
@@ -112,14 +107,20 @@ function hitBodyOf(
     case 'extended':
       return distanceToLine(cursor, pts[0], pts[1]) <= LINE_HIT_TOLERANCE;
 
+    // Ba công cụ kéo dài tới mép: vùng bắt dừng đúng chỗ nét vẽ dừng, tức mép vùng nến. Cho nó
+    // chạy tiếp vào cột giá là mỗi cú kéo trục giá ngang tầm đường kẻ lại thành kéo đường kẻ.
     case 'hline':
-      return Math.abs(cursor.y - pts[0].y) <= LINE_HIT_TOLERANCE;
+      return Math.abs(cursor.y - pts[0].y) <= LINE_HIT_TOLERANCE && cursor.x <= frame.pane.width;
 
     case 'hray':
-      return Math.abs(cursor.y - pts[0].y) <= LINE_HIT_TOLERANCE && cursor.x >= pts[0].x;
+      return (
+        Math.abs(cursor.y - pts[0].y) <= LINE_HIT_TOLERANCE &&
+        cursor.x >= pts[0].x &&
+        cursor.x <= frame.pane.width
+      );
 
     case 'vline':
-      return Math.abs(cursor.x - pts[0].x) <= LINE_HIT_TOLERANCE;
+      return Math.abs(cursor.x - pts[0].x) <= LINE_HIT_TOLERANCE && cursor.y <= frame.pane.height;
 
     case 'rect':
     case 'longpos':
@@ -145,8 +146,9 @@ function hitBodyOf(
       const top = Math.min(...pts.map((p) => p.y));
       const bottom = Math.max(...pts.map((p) => p.y));
       const left = Math.min(...pts.map((p) => p.x));
-      // Fibonacci mở rộng kéo các mức tới hết bề ngang, nên vùng bắt cũng phải tới đó.
-      const right = drawing.tool === 'fibext' ? canvas.width : Math.max(...pts.map((p) => p.x));
+      // Fibonacci mở rộng kéo các mức tới hết bề ngang vùng nến, nên vùng bắt cũng phải tới đó.
+      const right =
+        drawing.tool === 'fibext' ? frame.pane.width : Math.max(...pts.map((p) => p.x));
       return cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
     }
 
@@ -162,8 +164,8 @@ function hitBodyOf(
       const text = drawing.style.text;
       if (!text) return false;
       const box = textBoxSize(text, drawing.style.fontSize, drawing.style.fontFamily);
-      const x = Math.max(0, Math.min(pts[0].x, canvas.width - box.width));
-      const y = Math.max(0, Math.min(pts[0].y, canvas.height - box.height));
+      const x = Math.max(0, Math.min(pts[0].x, frame.pane.width - box.width));
+      const y = Math.max(0, Math.min(pts[0].y, frame.pane.height - box.height));
       return (
         cursor.x >= x && cursor.x <= x + box.width && cursor.y >= y && cursor.y <= y + box.height
       );
@@ -179,10 +181,10 @@ export function findDrawingAt(
   drawings: Drawing[],
   cursor: Pixel,
   mapper: DrawingMapper,
-  canvas: { width: number; height: number },
+  frame: Frame,
 ): { drawing: Drawing; hit: HitResult } | null {
   for (let i = drawings.length - 1; i >= 0; i--) {
-    const hit = hitTest(drawings[i], cursor, mapper, canvas);
+    const hit = hitTest(drawings[i], cursor, mapper, frame);
     if (hit.handleIndex !== null || hit.body) return { drawing: drawings[i], hit };
   }
   return null;

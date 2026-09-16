@@ -6,6 +6,11 @@
  * lightweight-charts v4 không có API vẽ hình tuỳ ý, nên ta phủ một `canvas` lên trên biểu đồ và
  * tự quy đổi (thời gian, giá) → pixel. Canvas luôn `pointer-events: none` để không cướp chuột
  * của biểu đồ bên dưới — kéo, phóng, đường ngắm vẫn hoạt động bình thường.
+ *
+ * **Hai lớp, không phải một.** Hộp và đường là nội dung trên nến, nằm dưới lớp vẽ tay để người
+ * dùng vẽ đè lên được. Bảng số liệu và đồng hồ đo thì ngược lại: chúng là bảng để đọc số, đứng
+ * yên một góc khung, nên phải nằm **trên** cả lớp vẽ tay — một đường kẻ vô tình quét ngang không
+ * được phép xoá mất con số đang đọc.
  */
 import type { IChartApi, ISeriesApi, SeriesType } from 'lightweight-charts';
 import { useCallback, useEffect, useRef } from 'react';
@@ -20,6 +25,7 @@ import {
 } from '@/lib/indicators/types';
 
 import { useResolvedTheme } from '@/hooks';
+import { clearedContext } from './canvasLayer';
 import { isChartLive } from './chartLifecycle';
 import { chartColor } from './chartTheme';
 
@@ -45,6 +51,7 @@ export function ShapesLayer({
   shapes: IndicatorShapes;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const panelRef = useRef<HTMLCanvasElement>(null);
   const theme = useResolvedTheme();
 
   // Dữ liệu đọc qua ref: hàm vẽ được đăng ký một lần vào sự kiện kéo/phóng của biểu đồ, nên nó
@@ -57,25 +64,16 @@ export function ShapesLayer({
   sizeRef.current = { width, height };
 
   const render = useCallback(() => {
-    const canvas = canvasRef.current;
     // `isChartLive` chứ không phải `chart != null`: biểu đồ có thể đã bị gỡ mà prop vẫn giữ
     // nguyên handle cũ — xem `chartLifecycle`. Gọi vào đó là ném lỗi, không phải trả về rỗng.
-    if (!canvas || !isChartLive(chart) || !series) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!isChartLive(chart) || !series) return;
 
     const { width: w, height: h } = sizeRef.current;
     if (!w || !h) return;
 
-    // Vẽ theo mật độ điểm ảnh thật của màn hình, nếu không chữ và nét bị nhoè trên màn Retina.
-    const dpr = window.devicePixelRatio || 1;
-    if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+    const ctx = clearedContext(canvasRef.current, w, h);
+    const panelCtx = clearedContext(panelRef.current, w, h);
+    if (!ctx || !panelCtx) return;
 
     if (!candlesRef.current.length) return;
     const mapper = createMapper(chart, series, candlesRef.current);
@@ -170,22 +168,29 @@ export function ShapesLayer({
       });
     }
 
-    // Bảng số liệu vẽ **sau cùng và trong cùng vùng xén**: nó là thứ đọc được ở mọi khoảng nhìn,
-    // nên phải nằm trên mọi hộp và đường, nhưng vẫn không được tràn sang cột giá.
+    ctx.restore();
+
+    // Bảng số liệu và đồng hồ đo sang **lớp riêng nằm trên lớp vẽ tay** — xem đầu tệp. Vẫn xén
+    // theo vùng nến y như lớp dưới: đứng ở góc khung thì cũng không được tràn sang cột giá.
     // Bật hai chỉ báo cùng có bảng thì chúng xếp chồng lên nhau ở cùng một góc — dồn cái sau
     // xuống dưới cái trước thay vì để hai bảng đè nhau thành một mớ chữ không đọc được.
+    panelCtx.save();
+    panelCtx.beginPath();
+    panelCtx.rect(0, 0, paneWidth, h);
+    panelCtx.clip();
+
     for (const gauge of shapesRef.current.gauges ?? []) {
-      drawGauge(ctx, gauge, paneWidth, h);
+      drawGauge(panelCtx, gauge, paneWidth, h);
     }
 
     const cornerOffset = new Map<string, number>();
     for (const table of shapesRef.current.tables ?? []) {
       const corner = table.corner ?? 'bottom-right';
       const offset = cornerOffset.get(corner) ?? 0;
-      cornerOffset.set(corner, offset + drawTable(ctx, table, paneWidth, h, offset) + 6);
+      cornerOffset.set(corner, offset + drawTable(panelCtx, table, paneWidth, h, offset) + 6);
     }
 
-    ctx.restore();
+    panelCtx.restore();
   }, [chart, series]);
 
   // Kéo hoặc phóng thì toạ độ đổi hết — phải vẽ lại.
@@ -204,13 +209,21 @@ export function ShapesLayer({
   }, [render, shapes, candles, width, height, theme]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ width, height, pointerEvents: 'none' }}
-      // Thư viện gán inline `z-index: 1..3` cho các canvas nội bộ của nó, và thẻ bọc biểu đồ
-      // không tạo ngữ cảnh xếp lớp nên những z-index đó "thoát" ra ngoài. Lớp này phải > 3.
-      className="absolute inset-0 z-[5]"
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        style={{ width, height, pointerEvents: 'none' }}
+        // Thư viện gán inline `z-index: 1..3` cho các canvas nội bộ của nó, và thẻ bọc biểu đồ
+        // không tạo ngữ cảnh xếp lớp nên những z-index đó "thoát" ra ngoài. Lớp này phải > 3.
+        className="absolute inset-0 z-[5]"
+      />
+      {/* Lớp bảng: trên `DrawingCanvas` (z-10), dưới thanh chỉnh kiểu và lớp chờ (z-20). */}
+      <canvas
+        ref={panelRef}
+        style={{ width, height, pointerEvents: 'none' }}
+        className="absolute inset-0 z-[15]"
+      />
+    </>
   );
 }
 

@@ -20,11 +20,19 @@ import {
   timeToLogical,
 } from '@/lib/drawings/coords';
 import { findDrawingAt } from '@/lib/drawings/hitTest';
-import { drawDrawing, type Pixel, type RenderPalette } from '@/lib/drawings/renderer';
+import {
+  drawAxisTags,
+  drawDrawing,
+  type Frame,
+  type Pixel,
+  type RenderPalette,
+} from '@/lib/drawings/renderer';
 import { SYMBOL_TOKEN, TOOL_META, type Drawing, type Point } from '@/lib/drawings/types';
+import { barInterval } from '@/lib/indicators/coords';
 import type { Candle } from '@/lib/indicators/math';
 import { useResolvedTheme } from '@/hooks';
 
+import { clearedContext } from './canvasLayer';
 import { isChartLive } from './chartLifecycle';
 import { chartColor, down, up } from './chartTheme';
 import { DrawingTextModal } from './DrawingTextModal';
@@ -75,6 +83,9 @@ type Interaction =
       grabbedPixel: Pixel;
     };
 
+/** Độ mờ của hình thuộc mã khác khi bật xem chồng — đủ thấy hình, đủ để không nhầm là của mã này. */
+const GHOST_ALPHA = 0.4;
+
 /** Văn bản đang chờ người dùng nhập nội dung — hình chỉ được tạo sau khi bấm Xong. */
 interface PendingText {
   point: Point;
@@ -103,6 +114,7 @@ export function DrawingCanvas({
   restoreInteraction,
 }: DrawingCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const noteRef = useRef<HTMLCanvasElement>(null);
   const interactionRef = useRef<Interaction>({ kind: 'idle' });
   const [pendingText, setPendingText] = useState<PendingText | null>(null);
 
@@ -115,7 +127,7 @@ export function DrawingCanvas({
   const sizeRef = useRef({ width, height });
   sizeRef.current = { width, height };
 
-  const { activeTool, drawings, selectedId, hideAll, lockAll } = store;
+  const { activeTool, drawings, ghosts, selectedId, hideAll, lockAll } = store;
   const theme = useResolvedTheme();
 
   const getMapper = useCallback(() => {
@@ -123,6 +135,23 @@ export function DrawingCanvas({
     if (!isChartLive(chart) || !series || !candlesRef.current.length) return null;
     return createDrawingMapper(chart, series, candlesRef.current);
   }, [chart, series]);
+
+  /**
+   * Khung đo hiện tại: cả khung, và vùng nến bên trong nó.
+   *
+   * Canvas phủ trọn khung nên `paneSize()` là thứ duy nhất biết cột giá rộng bao nhiêu — và nó
+   * đổi theo từng mã, vì nhãn "120.000" dài hơn nhãn "12,3". Lúc biểu đồ chưa dựng xong thì lấy
+   * tạm cả khung: thà hình tràn một nhịp còn hơn xén bằng một con số 0.
+   */
+  const frameOf = useCallback((): Frame => {
+    const { width: w, height: h } = sizeRef.current;
+    const pane = isChartLive(chart) ? chart.paneSize() : null;
+    return {
+      width: w,
+      height: h,
+      pane: { width: pane?.width || w, height: pane?.height || h },
+    };
+  }, [chart]);
 
   /**
    * Bật/tắt kéo-phóng của biểu đồ khi ta đang chiếm quyền điều khiển con trỏ.
@@ -166,56 +195,95 @@ export function DrawingCanvas({
   /* ── Vẽ lại canvas ────────────────────────────────────────────────────── */
 
   const render = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
     const { width: w, height: h } = sizeRef.current;
-    const dpr = window.devicePixelRatio || 1;
-    if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+    const ctx = clearedContext(canvasRef.current, w, h);
+    const noteCtx = clearedContext(noteRef.current, w, h);
+    if (!ctx || !noteCtx) return;
 
     const mapper = getMapper();
     if (!mapper || !w || !h || storeRef.current.hideAll) return;
 
+    const frame = frameOf();
     const base = {
       ctx,
       mapper,
-      width: w,
-      height: h,
+      ...frame,
       digits,
+      intraday: barInterval(candlesRef.current) < 86_400,
       selected: false,
       palette: palette(),
     };
+
+    // Hình đang vẽ dở: nối các điểm đã chốt với vị trí con trỏ.
+    const interaction = interactionRef.current;
+    const preview: Drawing | null =
+      interaction.kind === 'creating' && interaction.preview
+        ? {
+            id: '__preview__',
+            symbol: '__preview__',
+            tool: storeRef.current.activeTool,
+            points: [...interaction.points, interaction.preview],
+            style: storeRef.current.defaultStyle,
+            locked: false,
+            visible: true,
+          }
+        : null;
+
+    // Xén theo vùng nến. Hình neo theo (nến, giá) trôi sang phải mỗi khi người dùng cuộn về quá
+    // khứ, và canvas thì phủ cả cột giá — không xén là hình nằm đè lên trục giá. Biểu đồ tự xén
+    // phần nến của nó y như vậy; `ShapesLayer` cũng thế.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, frame.pane.width, frame.pane.height);
+    ctx.clip();
+
+    // Hình của mã khác (nút "xem chồng mọi mã"): vẽ **trước** và vẽ mờ — trước để hình của mã
+    // đang xem luôn nằm trên, mờ để không ai nhầm chúng là hình của mã này. Chúng nằm ở danh
+    // sách riêng của `store` nên mọi phép chọn và kéo đều không nhìn thấy.
+    const ghostList = storeRef.current.ghosts;
+    if (ghostList.length) {
+      ctx.save();
+      ctx.globalAlpha = GHOST_ALPHA;
+      for (const ghost of ghostList) drawDrawing(ghost, base);
+      ctx.restore();
+    }
+
+    let selected: Drawing | null = null;
+    // Ghi chú dán để lại vẽ sau, trên lớp của riêng nó — xem chú thích ở thẻ canvas bên dưới.
+    const pinned: { drawing: Drawing; selected: boolean }[] = [];
 
     for (const drawing of storeRef.current.drawings) {
       // Khoá tất cả: hình vẫn hiện nhưng không được phép nhận điểm neo, nên bỏ luôn phần chọn.
       const isSelected =
         !storeRef.current.lockAll && drawing.id === storeRef.current.selectedId;
-      drawDrawing(drawing, { ...base, selected: isSelected });
+      if (isSelected) selected = drawing;
+      if (drawing.pin) pinned.push({ drawing, selected: isSelected });
+      else drawDrawing(drawing, { ...base, selected: isSelected });
     }
 
-    // Hình đang vẽ dở: nối các điểm đã chốt với vị trí con trỏ.
-    const interaction = interactionRef.current;
-    if (interaction.kind === 'creating' && interaction.preview) {
-      const preview: Drawing = {
-        id: '__preview__',
-        symbol: '__preview__',
-        tool: storeRef.current.activeTool,
-        points: [...interaction.points, interaction.preview],
-        style: storeRef.current.defaultStyle,
-        locked: false,
-        visible: true,
-      };
-      drawDrawing(preview, base);
+    if (preview) drawDrawing(preview, base);
+
+    ctx.restore();
+
+    // Ghi chú dán: cùng cách xén, chỉ khác lớp. Nó neo theo khung nên không dính gì tới nến,
+    // nhưng vẫn không được nằm đè lên hai trục — `drawTextBox` đã tự lùi vào trong vùng nến rồi,
+    // lớp xén ở đây chỉ là chốt chặn cuối cho những cỡ chữ thật lớn.
+    if (pinned.length) {
+      const noteBase = { ...base, ctx: noteCtx };
+      noteCtx.save();
+      noteCtx.beginPath();
+      noteCtx.rect(0, 0, frame.pane.width, frame.pane.height);
+      noteCtx.clip();
+      for (const item of pinned) drawDrawing(item.drawing, { ...noteBase, selected: item.selected });
+      noteCtx.restore();
     }
-  }, [getMapper, digits]);
+
+    // Mốc thời gian và mốc giá dán lên hai trục — **sau** khi bỏ lớp xén, vì chỗ đứng của chúng
+    // chính là hai dải trục vừa bị xén đi. Hình đang vẽ được ưu tiên: lúc đó mắt người dùng
+    // đang ở đầu bút, không ở hình đã chọn trước đó.
+    const tagged = preview ?? selected;
+    if (tagged) drawAxisTags(tagged, base);
+  }, [getMapper, frameOf, digits]);
 
   // Vẽ lại khi người dùng kéo hoặc phóng biểu đồ.
   useEffect(() => {
@@ -233,6 +301,7 @@ export function DrawingCanvas({
   }, [
     render,
     drawings,
+    ghosts,
     activeTool,
     selectedId,
     hideAll,
@@ -304,7 +373,7 @@ export function DrawingCanvas({
       if (tool === 'cursor' || tool === 'crosshair') {
         if (state.lockAll || state.hideAll) return;
 
-        const found = findDrawingAt(state.drawings, pixel, mapper, sizeRef.current);
+        const found = findDrawingAt(state.drawings, pixel, mapper, frameOf());
         if (!found) {
           if (state.selectedId) state.select(null);
           return;
@@ -468,7 +537,7 @@ export function DrawingCanvas({
             host.style.cursor = 'default';
             break;
           }
-          const found = findDrawingAt(state.drawings, pixel, mapper, sizeRef.current);
+          const found = findDrawingAt(state.drawings, pixel, mapper, frameOf());
           host.style.cursor = !found
             ? 'default'
             : found.drawing.locked
@@ -522,7 +591,7 @@ export function DrawingCanvas({
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
     };
-  }, [hostRef, chart, series, getMapper, toPoint, render, setChartInteractive]);
+  }, [hostRef, chart, series, getMapper, frameOf, toPoint, render, setChartInteractive]);
 
   /* ── Khoá kéo-phóng suốt thời gian đang cầm một công cụ vẽ ────────────── */
 
@@ -617,6 +686,16 @@ export function DrawingCanvas({
         ref={canvasRef}
         style={{ width, height, pointerEvents: 'none' }}
         className="absolute inset-0 z-10"
+      />
+
+      {/* Ghi chú dán đứng riêng một lớp, trên cả bảng số liệu của chỉ báo (`ShapesLayer`, z-15).
+          Nó không neo theo nến mà neo theo khung: người dùng đặt nó ở đúng chỗ họ muốn đọc, nên
+          không có chỉ báo nào được quyền bật lên che mất. Dưới thanh chỉnh kiểu (z-20) — đang sửa
+          ghi chú thì vẫn phải với tới nút. */}
+      <canvas
+        ref={noteRef}
+        style={{ width, height, pointerEvents: 'none' }}
+        className="absolute inset-0 z-[16]"
       />
 
       <DrawingTextModal

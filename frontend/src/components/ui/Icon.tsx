@@ -92,7 +92,8 @@ export type IconName =
   | 'arrow-up-right'
   | 'brush'
   | 'ruler'
-  | 'magnet';
+  | 'magnet'
+  | 'layers';
 
 type IconProps = SVGProps<SVGSVGElement> & {
   name: IconName;
@@ -112,6 +113,12 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  layers: (
+    <>
+      <path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" />
+      <path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
+    </>
+  ),
   user: (
     <>
       <circle cx="12" cy="8" r="3.75" />

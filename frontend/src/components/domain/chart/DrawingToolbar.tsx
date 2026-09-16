@@ -220,6 +220,16 @@ export function DrawingToolbar({ store }: { store: DrawingStore }) {
         icon={store.hideAll ? 'eye-off' : 'eye'}
         onClick={store.toggleHideAll}
       />
+      <ToolButton
+        active={store.allSymbols}
+        label={
+          store.allSymbols
+            ? `Chỉ hiện hình của mã này (đang xem chồng ${store.ghosts.length} hình của mã khác)`
+            : 'Xem chồng hình vẽ của mọi mã'
+        }
+        icon="layers"
+        onClick={store.toggleAllSymbols}
+      />
 
       {/* Xoá sạch là thao tác không hoàn tác được, nên phải hỏi lại — nhưng hỏi ngay tại chỗ chứ
           không mở hộp thoại che mất biểu đồ đang xem. */}

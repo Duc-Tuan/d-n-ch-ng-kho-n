@@ -8,6 +8,8 @@
  * Màu chữ và nền nhãn **không viết cứng**: site khách hàng chạy nền tối, site quản trị nền sáng.
  * Chúng đi vào qua `palette` để cùng một hình đọc được ở cả hai nơi.
  */
+import { dayjs } from '@/lib/datetime';
+
 import type { DrawingMapper } from './coords';
 import {
   FIB_EXT_LEVELS,
@@ -35,13 +37,29 @@ export interface RenderPalette {
   down: string;
 }
 
-export interface RenderContext {
-  ctx: CanvasRenderingContext2D;
-  mapper: DrawingMapper;
+/**
+ * Hai khung đo mà lớp vẽ phải phân biệt.
+ *
+ * Canvas phủ **trọn** khung biểu đồ, kể cả cột giá bên phải và trục thời gian bên dưới — nó phải
+ * vậy thì ghi chú dán mới đặt được ở mọi chỗ người dùng nhìn thấy. Nhưng hình neo theo (nến, giá)
+ * thì chỉ được sống trong vùng nến: cuộn về quá khứ là hình trôi sang phải, và nếu đo theo cả
+ * khung thì nó bò lên nằm đè cột giá.
+ */
+export interface Frame {
+  /** Cả khung. Đây là thang quy đổi của ghi chú dán (`pin`). */
   width: number;
   height: number;
+  /** Vùng nến — đã trừ cột giá và trục thời gian. Mốc để mọi hình theo nến dừng lại. */
+  pane: { width: number; height: number };
+}
+
+export interface RenderContext extends Frame {
+  ctx: CanvasRenderingContext2D;
+  mapper: DrawingMapper;
   /** Số chữ số thập phân khi in nhãn giá — mã giá 12,35 và mã giá 120.000 cần khác nhau. */
   digits: number;
+  /** Khung trong ngày → nhãn mốc thời gian phải có giờ phút, khung ngày trở lên thì không. */
+  intraday: boolean;
   selected: boolean;
   palette: RenderPalette;
 }
@@ -116,6 +134,17 @@ export function formatPrice(value: number, digits: number): string {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(value);
+}
+
+/**
+ * Nhãn cho một mốc thời gian của hình vẽ.
+ *
+ * Đọc bằng **UTC** chứ không phải giờ máy. `toIndicatorCandles` đã cộng sẵn lệch múi giờ vào
+ * `time` để thư viện — vốn luôn in nhãn theo UTC — hiện ra giờ Việt Nam; đọc lại bằng giờ địa
+ * phương ở đây là cộng lệch lần thứ hai, và nhãn của ta lệch 7 tiếng so với trục ngay bên cạnh.
+ */
+export function formatBarTime(time: number, intraday: boolean): string {
+  return dayjs.utc(time * 1000).format(intraday ? 'DD/MM HH:mm' : 'DD/MM/YYYY');
 }
 
 export function toPixels(points: Point[], mapper: DrawingMapper): (Pixel | null)[] {
@@ -236,7 +265,7 @@ export function drawDrawing(drawing: Drawing, rc: RenderContext) {
   const pts = pixelsOf(drawing, rc.mapper, rc);
   if (!pts?.length) return;
 
-  const { ctx, width, height } = rc;
+  const { ctx, pane } = rc;
   const style = drawing.style;
   ctx.save();
   applyStyle(ctx, style);
@@ -259,23 +288,23 @@ export function drawDrawing(drawing: Drawing, rc: RenderContext) {
       break;
 
     case 'ray': {
-      const { start, end } = extendLine(pts[0], pts[1], width, height, false);
+      const { start, end } = extendLine(pts[0], pts[1], pane.width, pane.height, false);
       line(ctx, start, end);
       break;
     }
 
     case 'extended': {
-      const { start, end } = extendLine(pts[0], pts[1], width, height, true);
+      const { start, end } = extendLine(pts[0], pts[1], pane.width, pane.height, true);
       line(ctx, start, end);
       break;
     }
 
     case 'hline':
-      line(ctx, { x: 0, y: pts[0].y }, { x: width, y: pts[0].y });
+      line(ctx, { x: 0, y: pts[0].y }, { x: pane.width, y: pts[0].y });
       label(
         rc,
         formatPrice(drawing.points[0].price, rc.digits),
-        width - 4,
+        pane.width - 4,
         pts[0].y,
         style.color,
         style.fontSize,
@@ -284,11 +313,11 @@ export function drawDrawing(drawing: Drawing, rc: RenderContext) {
       break;
 
     case 'hray':
-      line(ctx, pts[0], { x: width, y: pts[0].y });
+      line(ctx, pts[0], { x: pane.width, y: pts[0].y });
       label(
         rc,
         formatPrice(drawing.points[0].price, rc.digits),
-        width - 4,
+        pane.width - 4,
         pts[0].y,
         style.color,
         style.fontSize,
@@ -297,7 +326,7 @@ export function drawDrawing(drawing: Drawing, rc: RenderContext) {
       break;
 
     case 'vline':
-      line(ctx, { x: pts[0].x, y: 0 }, { x: pts[0].x, y: height });
+      line(ctx, { x: pts[0].x, y: 0 }, { x: pts[0].x, y: pane.height });
       break;
 
     case 'rect': {
@@ -411,8 +440,9 @@ export function drawDrawing(drawing: Drawing, rc: RenderContext) {
 /**
  * Hộp chữ nhiều dòng, neo góc trên trái vào `at`.
  *
- * Hộp tự lùi vào trong khi chạm mép phải hoặc mép dưới: ghi chú dán ở sát mép mà tràn ra ngoài thì
- * mất luôn phần chữ, và người dùng không có cách nào kéo nó về vì phần chạm được cũng nằm ngoài.
+ * Hộp tự lùi vào trong khi chạm mép phải hoặc mép dưới **của vùng nến**: ghi chú dán ở sát mép mà
+ * tràn ra ngoài thì mất luôn phần chữ — bị cột giá che, hoặc bị lớp xén cắt mất — và người dùng
+ * không có cách nào kéo nó về vì phần chạm được cũng nằm ngoài.
  */
 function drawTextBox(
   rc: RenderContext,
@@ -429,8 +459,8 @@ function drawTextBox(
     style.fontFamily,
   );
 
-  const x = Math.max(0, Math.min(at.x, rc.width - boxWidth));
-  const y = Math.max(0, Math.min(at.y, rc.height - boxHeight));
+  const x = Math.max(0, Math.min(at.x, rc.pane.width - boxWidth));
+  const y = Math.max(0, Math.min(at.y, rc.pane.height - boxHeight));
 
   ctx.save();
   ctx.setLineDash([]);
@@ -487,7 +517,7 @@ function drawFib(
   levels: { ratio: number; color: string }[],
   extension: boolean,
 ) {
-  const { ctx, width } = rc;
+  const { ctx, pane } = rc;
   const points = drawing.points;
 
   // Thoái lui: các mức nằm **trong** đoạn P0→P1.
@@ -496,7 +526,7 @@ function drawFib(
   const range = points[1].price - points[0].price;
 
   const left = Math.min(...pts.map((p) => p.x));
-  const right = extension ? width : Math.max(...pts.map((p) => p.x));
+  const right = extension ? pane.width : Math.max(...pts.map((p) => p.x));
 
   ctx.save();
   levels.forEach(({ ratio, color }, index) => {
@@ -595,5 +625,194 @@ function drawMeasure(rc: RenderContext, drawing: Drawing, pts: Pixel[]) {
   const days = Math.abs(Math.round((b.time - a.time) / 86_400));
   const text = `${delta >= 0 ? '+' : ''}${formatPrice(delta, rc.digits)} (${percent.toFixed(2)}%) · ${days} ngày`;
   label(rc, text, (pts[0].x + pts[1].x) / 2, Math.min(pts[0].y, pts[1].y) - 12, color, 11, 'center');
+  ctx.restore();
+}
+
+/* ── Nhãn mốc trên hai trục ─────────────────────────────────────────────── */
+
+/** Cao của một nhãn trục, và cỡ chữ trong đó. Khớp với `layout.fontSize` của biểu đồ. */
+const AXIS_TAG_HEIGHT = 18;
+const AXIS_TAG_FONT = 11;
+/** Dải trục hẹp hơn chừng này coi như **không có** — xem `drawAxisTags`. */
+const AXIS_MIN_BAND = 8;
+/** Độ mờ của dải nối hai mốc. Phải nhạt hơn hẳn nhãn, nếu không nhãn chìm vào dải. */
+const AXIS_SPAN_ALPHA = 0.22;
+
+/** Đổi màu hình sang ba kênh RGB. `null` với những dạng màu không đọc được (tên màu CSS…). */
+function toRgb(color: string): [number, number, number] | null {
+  if (color.startsWith('#')) {
+    const hex = color.slice(1);
+    const full = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex;
+    if (full.length < 6) return null;
+    return [
+      parseInt(full.slice(0, 2), 16),
+      parseInt(full.slice(2, 4), 16),
+      parseInt(full.slice(4, 6), 16),
+    ];
+  }
+  const match = color.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
+
+/**
+ * Màu chữ đặt trên nền màu của hình: trắng hay gần đen, chọn theo độ sáng.
+ *
+ * Bảng màu hình vẽ có cả `#FF9800` lẫn `#131722` — một màu chữ cố định thì một trong hai đầu bảng
+ * chắc chắn không đọc nổi.
+ */
+function readableInk(color: string): string {
+  const rgb = toRgb(color);
+  if (!rgb) return '#FFFFFF';
+  // Trọng số theo cảm nhận của mắt (Rec. 709): xanh lá sáng hơn hẳn xanh dương ở cùng con số.
+  const luminance = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  return luminance > 150 ? '#131722' : '#FFFFFF';
+}
+
+/**
+ * Vẽ một nhãn trục: nền đặc màu hình, chữ canh giữa cả hai chiều.
+ *
+ * Chiều cao đi vào từ ngoài chứ không lấy cứng `AXIS_TAG_HEIGHT`: nhãn trên trục thời gian phủ
+ * trọn bề cao dải trục, còn nhãn trên cột giá thì không thể — chúng xếp chồng theo chiều dọc.
+ */
+function axisTag(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  bg: string,
+  fg: string,
+) {
+  ctx.fillStyle = bg;
+  ctx.fillRect(left, top, width, height);
+  ctx.fillStyle = fg;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, left + width / 2, top + height / 2);
+}
+
+/**
+ * Những điểm neo đáng dán nhãn.
+ *
+ * Bút vẽ có hàng trăm điểm — dán hết thì hai trục kín đặc và không đọc được gì. Nó chỉ cần đúng
+ * hai mốc đầu và cuối, cũng chính là nghĩa của "bắt đầu — kết thúc".
+ */
+function tagAnchors(drawing: Drawing): Point[] {
+  const pts = drawing.points;
+  if (drawing.tool !== 'brush' || pts.length < 3) return pts;
+  return [pts[0], pts[pts.length - 1]];
+}
+
+/** Kẹp một toạ độ vào trong vùng nến, để dải nối không tràn ra ngoài khi một đầu trôi khỏi màn. */
+function clampTo(value: number, max: number): number {
+  return Math.max(0, Math.min(value, max));
+}
+
+/**
+ * Mốc thời gian và mốc giá của hình, dán lên cột giá và trục thời gian — như TradingView.
+ *
+ * Gọi **ngoài** lớp xén của `DrawingCanvas`: chỗ đứng của những nhãn này chính là hai dải trục
+ * mà lớp xén cắt đi. Chỉ dán cho hình đang chọn hoặc đang vẽ dở; dán cho mọi hình thì một biểu đồ
+ * mười đường kẻ là hai trục phủ kín nhãn.
+ */
+export function drawAxisTags(drawing: Drawing, rc: RenderContext) {
+  // Ghi chú dán neo theo khung, không theo (nến, giá) — nó không có mốc nào để chỉ lên trục.
+  if (!drawing.visible || drawing.pin) return;
+
+  const anchors = tagAnchors(drawing);
+  if (!anchors.length) return;
+
+  const { ctx, pane } = rc;
+  const bg = drawing.style.color;
+  const fg = readableInk(bg);
+
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.font = `${AXIS_TAG_FONT}px -apple-system, system-ui, sans-serif`;
+  ctx.textBaseline = 'middle';
+
+  // ── Cột giá ──
+  // Đường dọc chỉ có một mốc thời gian, không có mức giá nào để chỉ.
+  if (drawing.tool !== 'vline') {
+    const band = rc.width - pane.width;
+    const texts = anchors.map((anchor) => formatPrice(anchor.price, rc.digits));
+    // Không có cột giá thì nép vào trong mép phải vùng nến, còn hơn vẽ ra ngoài canvas. Bề rộng
+    // lấy theo nhãn dài nhất để mấy nhãn của cùng một hình thẳng hàng nhau.
+    const width =
+      band >= AXIS_MIN_BAND
+        ? band
+        : Math.max(...texts.map((text) => ctx.measureText(text).width)) + 10;
+    const left = band >= AXIS_MIN_BAND ? pane.width : pane.width - width;
+
+    const ys = anchors
+      .map((anchor) => rc.mapper.toY(anchor.price))
+      .filter((y): y is number => y !== null);
+
+    // Dải nối hai mốc: cùng màu nhưng mờ hơn hẳn nhãn — nhìn là thấy ngay hình chiếm khoảng giá
+    // nào, không phải đọc hai con số rồi tự trừ. Kẹp vào vùng nhìn thấy chứ không bỏ như nhãn:
+    // một đầu trôi ra ngoài màn hình thì phần còn lại vẫn đáng hiện.
+    if (ys.length > 1) {
+      const top = clampTo(Math.min(...ys), pane.height);
+      const bottom = clampTo(Math.max(...ys), pane.height);
+      if (bottom - top > 0.5) {
+        ctx.fillStyle = withAlpha(bg, AXIS_SPAN_ALPHA);
+        ctx.fillRect(left, top, width, bottom - top);
+      }
+    }
+
+    const seen = new Set<number>();
+    anchors.forEach((anchor, index) => {
+      const y = rc.mapper.toY(anchor.price);
+      // Ngoài vùng giá đang nhìn thấy thì bỏ: nhãn kẹp vào mép sẽ chỉ sai mức giá.
+      if (y === null || y < 0 || y > pane.height) return;
+      // Hai điểm neo cùng một mức giá (hộp chữ nhật, kênh giá) chỉ cần một nhãn.
+      if (seen.has(Math.round(y))) return;
+      seen.add(Math.round(y));
+
+      const top = Math.max(0, Math.min(y - AXIS_TAG_HEIGHT / 2, pane.height - AXIS_TAG_HEIGHT));
+      axisTag(ctx, texts[index], left, top, width, AXIS_TAG_HEIGHT, bg, fg);
+    });
+  }
+
+  // ── Trục thời gian ──
+  // Đường ngang trải hết bề ngang: mốc thời gian của nó không mang nghĩa gì.
+  if (drawing.tool !== 'hline') {
+    const band = rc.height - pane.height;
+    // Trục thời gian của biểu đồ giá bị tắt khi có cửa sổ chỉ báo — trục thật nằm dưới cửa sổ
+    // cuối cùng, một biểu đồ khác hẳn. Lúc đó dán nhãn nép vào mép dưới vùng nến, cao vừa đủ
+    // chữ; còn khi có trục thật thì nhãn và dải mờ cùng phủ trọn bề cao của nó.
+    const hasAxis = band >= AXIS_TAG_HEIGHT;
+    const top = hasAxis ? pane.height : pane.height - AXIS_TAG_HEIGHT - 2;
+    const height = hasAxis ? band : AXIS_TAG_HEIGHT;
+
+    const xs = anchors
+      .map((anchor) => rc.mapper.toX(anchor.time))
+      .filter((x): x is number => x !== null);
+
+    if (xs.length > 1) {
+      const from = clampTo(Math.min(...xs), pane.width);
+      const to = clampTo(Math.max(...xs), pane.width);
+      if (to - from > 0.5) {
+        // Phủ trọn bề cao dải trục, y như dải bên cột giá phủ trọn bề rộng của nó — hai dải chỉ
+        // cùng một hình, để chúng cao thấp khác nhau thì trông như hai thứ rời rạc.
+        ctx.fillStyle = withAlpha(bg, AXIS_SPAN_ALPHA);
+        ctx.fillRect(from, top, to - from, height);
+      }
+    }
+
+    const seen = new Set<number>();
+    for (const anchor of anchors) {
+      const x = rc.mapper.toX(anchor.time);
+      if (x === null || x < 0 || x > pane.width) continue;
+      if (seen.has(Math.round(x))) continue;
+      seen.add(Math.round(x));
+
+      const text = formatBarTime(anchor.time, rc.intraday);
+      const width = ctx.measureText(text).width + 10;
+      const left = Math.max(0, Math.min(x - width / 2, pane.width - width));
+      axisTag(ctx, text, left, top, width, height, bg, fg);
+    }
+  }
+
   ctx.restore();
 }

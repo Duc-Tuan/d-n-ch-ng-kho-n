@@ -255,7 +255,19 @@ export function PriceChart({
    */
   const [sideWidth, setSideWidth] = useLocalStorage(SIDE_WIDTH_KEY, SIDE_WIDTH_DEFAULT);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
-  const [candles, setCandles] = useState<Candle[]>(initialCandles);
+  /**
+   * Chuỗi nến, kèm **dấu chủ sở hữu**: mã và khung mà nó thuộc về.
+   *
+   * Dấu này phải nằm trong cùng một ô trạng thái với chuỗi nến, không phải trong một `ref` bên
+   * cạnh. Lý do là một lượt render duy nhất, lượt ngay sau cú bấm đổi mã: `symbol` đã là mã mới
+   * (đến từ prop) trong khi `candles` vẫn là chuỗi của mã cũ (state chưa kịp cập nhật). Ở đúng
+   * lượt ấy, bất cứ ai so `seriesKey` với thực tế đều bị lừa — xem chỗ vẽ ở dưới.
+   */
+  const [loaded, setLoaded] = useState<{ key: string; candles: Candle[] }>(() => ({
+    key: `${symbol ?? ''}@${DEFAULT_TIMEFRAME}`,
+    candles: initialCandles,
+  }));
+  const candles = loaded.candles;
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
 
@@ -289,7 +301,9 @@ export function PriceChart({
    *  Gắn theo **mã và khung**, không chỉ theo mã: một đường xu hướng nối hai đáy cách nhau sáu
    *  tháng trên biểu đồ ngày, khi hiện lại trên biểu đồ 1 phút, sẽ nằm ngoài toàn bộ vùng nhìn
    *  — người dùng chỉ thấy hình vẽ của mình biến mất mà không hiểu vì sao. */
-  const drawings = useDrawings(symbol ? `${symbol}@${timeframe}` : undefined, symbol);
+  // Khoá kho hình là **mã trần**, không kèm khung thời gian: điểm neo là (thời gian, giá) nên
+  // một đường hỗ trợ vẽ ở khung Ngày vẫn nằm đúng chỗ khi xem khung 1 giờ.
+  const drawings = useDrawings(symbol);
 
   // Dùng ref trong callback của biểu đồ để không phải gắn lại sự kiện mỗi lần dữ liệu đổi.
   const stateRef = useRef({ candles, loadingMore, exhausted, symbol, timeframe, switching });
@@ -317,12 +331,17 @@ export function PriceChart({
 
     if (loadedKeyRef.current !== seriesKey) {
       loadedKeyRef.current = seriesKey;
-      setCandles(initialCandles);
+      setLoaded({ key: seriesKey, candles: initialCandles });
       setExhausted(false);
       setSwitching(false);
       return;
     }
-    setCandles((current) => mergeCandles(current, initialCandles));
+    setLoaded((current) => ({
+      key: seriesKey,
+      // Gộp chỉ có nghĩa khi chuỗi trên tay đúng là của chuỗi này; khác thì lấy nguyên chuỗi mới.
+      candles:
+        current.key === seriesKey ? mergeCandles(current.candles, initialCandles) : initialCandles,
+    }));
   }, [timeframe, seriesKey, initialCandles, tzOffsetSeconds]);
 
   /* ── Các khung còn lại: biểu đồ tự gọi máy chủ ──────────────────────────
@@ -348,7 +367,7 @@ export function PriceChart({
       .then((response) => {
         if (cancelled) return;
         loadedKeyRef.current = seriesKey;
-        setCandles(response.candles ?? []);
+        setLoaded({ key: seriesKey, candles: response.candles ?? [] });
         setTzOffset(response.tz_offset_seconds ?? 0);
         setExhausted(false);
       })
@@ -357,7 +376,7 @@ export function PriceChart({
         loadedKeyRef.current = seriesKey;
         // Khung chưa có dữ liệu (mã mới, hoặc khung 1 phút của mã ít thanh khoản) không phải
         // lỗi cần báo đỏ — biểu đồ trống kèm dòng chữ ở dưới đã nói đủ.
-        setCandles([]);
+        setLoaded({ key: seriesKey, candles: [] });
         setExhausted(true);
       })
       .finally(() => {
@@ -457,6 +476,18 @@ export function PriceChart({
     // khung khác nhau vào một mảng, và nó chỉ lộ ra ở chỗ vài cây nến sai chiều giữa biểu đồ.
     if (state.switching) return;
 
+    /**
+     * Chuỗi mà lượt gọi này thuộc về.
+     *
+     * Giữa lúc chờ phản hồi, người dùng có thể đã bấm sang mã khác. Nối phần lịch sử ấy vào là
+     * **dán nguyên chuỗi của mã cũ lên biểu đồ của mã mới** — `prependOlder` trả về chuỗi cũ
+     * kèm phần nối thêm, nên cả bốn trăm cây nến của AAA, kể cả cây đang chạy mang giá thời gian
+     * thực của nó, hiện ra dưới cái tên MSN. Cờ `switching` ở trên chỉ chặn đổi **khung**, và
+     * chặn ở lúc bắt đầu chứ không phải lúc phản hồi về.
+     */
+    const requestedKey = `${state.symbol}@${state.timeframe}`;
+    const stale = () => `${stateRef.current.symbol}@${stateRef.current.timeframe}` !== requestedKey;
+
     setLoadingMore(true);
     try {
       const earliest = state.candles[0];
@@ -470,6 +501,7 @@ export function PriceChart({
         before: earliest.time ?? `${earliest.trade_date}T00:00:00Z`,
         limit: LOAD_MORE_SIZE,
       });
+      if (stale()) return;
 
       const older = response.candles ?? [];
       const merged = prependOlder(state.candles, older);
@@ -478,11 +510,16 @@ export function PriceChart({
         setExhausted(true);
         return;
       }
-      setCandles(merged);
+      setLoaded((current) =>
+        current.key === requestedKey ? { key: requestedKey, candles: merged } : current,
+      );
     } catch {
       // Hết dữ liệu hoặc lỗi mạng — dừng tải thêm, không báo lỗi ồn ào giữa thao tác cuộn.
-      setExhausted(true);
+      // Vẫn phải hỏi lại `stale`: đóng dấu "hết lịch sử" lên chuỗi của mã mới thì mã ấy không
+      // bao giờ cuộn về quá khứ được nữa, cho tới khi rời trang.
+      if (!stale()) setExhausted(true);
     } finally {
+      // Cờ bận thì gỡ vô điều kiện — để sót lại một lần là chặn mọi lượt tải thêm sau đó.
       setLoadingMore(false);
     }
   }, []);
@@ -778,6 +815,19 @@ export function PriceChart({
   useEffect(() => {
     if (!priceRef.current) return;
 
+    /* Chuỗi trên tay chưa phải chuỗi của mã đang chọn thì **không vẽ gì cả**.
+
+       Đây là lượt render ngay sau cú bấm đổi mã: prop `symbol` đã đổi, `candles` thì chưa. Vẽ ở
+       lượt này là vẽ nến của mã cũ rồi đóng dấu `appliedRef` bằng khoá của mã **mới** — và cái
+       dấu sai đó mới là chỗ chết người: lượt sau, khi nến thật của mã mới về, `tailOnly` thấy
+       cùng khoá, cùng số nến, cùng mốc đầu và mốc cuối (hai mã cùng khung ngày thì ba thứ ấy
+       giống hệt nhau) nên kết luận "chỉ có nhịp giá mới" và chỉ `update` mỗi cây cuối. Kết quả
+       là toàn bộ thân biểu đồ vẫn là mã cũ, đúng một cây nến cuối mang giá mã mới.
+
+       Bỏ qua lượt này thì `appliedRef` giữ nguyên khoá cũ, và lượt sau `sameSeries` bằng `false`
+       như nó phải thế — vẽ lại trọn chuỗi, đặt lại trục giá, đặt lại vùng nhìn. */
+    if (loaded.key !== seriesKey) return;
+
     /* Nhịp giá đang chạy chỉ sửa **cây nến cuối**: vẫn mã ấy, khung ấy, số nến ấy, mốc đầu và
        mốc cuối ấy. Đi tiếp xuống `setData` thì nhánh `!grew` gọi `applyRange` và vùng nhìn bị
        kéo về khoảng mặc định — hai giây một lần, đúng lúc người dùng đang phóng to một đoạn quá
@@ -841,7 +891,7 @@ export function PriceChart({
       first: bars[0]?.time,
       last: bars.at(-1)?.time,
     };
-  }, [bars, volumes, applyRange, epoch, seriesKey]);
+  }, [bars, volumes, applyRange, epoch, seriesKey, loaded.key]);
 
   /* ── Đường của chỉ báo vẽ đè ───────────────────────────────────────────── */
 
@@ -1090,11 +1140,13 @@ export function PriceChart({
                 </div>
               ) : null}
 
-              {/* Nhãn các chỉ báo vẽ đè: tên, và nút chỉnh ngay tại chỗ đang nhìn thấy đường đó. */}
+              {/* Nhãn các chỉ báo vẽ đè: tên, và nút chỉnh ngay tại chỗ đang nhìn thấy đường đó.
+                  `z-[15]` — cùng tầng với lớp bảng của `ShapesLayer`, tức trên lớp vẽ tay: đây là
+                  thông số để đọc và nút để bấm, một nét vẽ quét ngang không được che mất. */}
               {indicators.overlays.length > 0 && (
                 <div
                   data-chart-ui
-                  className="pointer-events-none absolute left-2 top-1 z-10 flex flex-col gap-0.5"
+                  className="pointer-events-none absolute left-2 top-1 z-[15] flex flex-col gap-0.5"
                 >
                   {indicators.overlays.map((instance) => (
                     <span

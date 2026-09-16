@@ -207,12 +207,19 @@ export default function MarketPage() {
    * kèm toàn bộ chỉ báo cho mỗi nhịp ấy là việc thừa.
    */
   const liveQuote = quotes[selected];
+
+  /**
+   * Chuỗi nến đang cầm có đúng là của mã đang chọn không.
+   *
+   * Phản hồi cũ không được phép vẽ dưới cái tên mới. Bình thường hai thứ này luôn khớp, nhưng
+   * "bình thường" không phải là một chốt chặn: chuỗi nến đi một đường (HTTP), giá chạy đi một
+   * đường khác (WebSocket), và mỗi cú bấm đổi mã là một lần hai đường ấy về đích lệch nhau.
+   * Chuỗi nến mang sẵn `symbol` của chính nó — hỏi nó một câu là đủ.
+   */
+  const chartReady = ohlcv?.symbol?.toUpperCase() === selected.trim().toUpperCase();
   const chartCandles = useMemo<Candle[]>(
-    // Chuỗi nến chưa về thì **không** phủ gói tin lên mảng rỗng: `withLiveQuote` sẽ dựng đúng
-    // một cây nến từ gói tin ấy, và một biểu đồ một cây nến chớp lên giữa hai mã trông như dữ
-    // liệu hỏng chứ không như đang tải.
-    () => (ohlcv ? withLiveQuote(ohlcv.candles ?? [], liveQuote) : []),
-    [ohlcv, liveQuote],
+    () => (ohlcv && chartReady ? withLiveQuote(ohlcv.candles ?? [], liveQuote, selected) : []),
+    [ohlcv, chartReady, liveQuote, selected],
   );
   const lastCandle = chartCandles[chartCandles.length - 1];
 
@@ -485,7 +492,10 @@ export default function MarketPage() {
               indicators={indicators}
               attribution={ohlcv?.attribution}
               height={420}
-              loading={chartLoading}
+              // Có dữ liệu nhưng là của mã khác thì vẫn là "đang tải" chứ không phải "không có
+              // dữ liệu": khoảnh khắc ấy sẽ tự qua, còn dòng chữ "Chưa có dữ liệu giá" thì đọc
+              // như một kết luận.
+              loading={chartLoading || (Boolean(ohlcv) && !chartReady)}
               assetClass={assetClass}
               onExpandedChange={setChartExpanded}
               onSymbolChange={selectSymbol}

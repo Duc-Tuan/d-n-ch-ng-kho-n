@@ -11,6 +11,13 @@
  * Điểm neo lưu theo giá tuyệt đối, mà mỗi mã một vùng giá riêng — mang đường xu hướng của VNM
  * sang FPT thì nó rơi ra ngoài khung nhìn hoặc nằm lạc chỗ giữa biểu đồ.
  *
+ * Ai muốn xem chồng hình của mọi mã thì bật `allSymbols`: hình của mã khác trả về ở `ghosts`, vẽ
+ * mờ và **không bắt chuột** — đúng vì vùng giá của chúng không phải vùng giá đang hiện, kéo một
+ * hình như thế ở đây là kéo theo một thang đo không phải của nó.
+ *
+ * Hình **không** gắn với khung thời gian: điểm neo là (thời gian, giá), cả hai đều không đổi khi
+ * chuyển khung, nên một đường hỗ trợ vẽ ở khung Ngày vẫn đúng chỗ ở khung 1 giờ.
+ *
  * Cách đọc/ghi `localStorage` theo đúng khuôn của `useIndicators`: đọc **sau khi** gắn vào DOM để
  * lượt dựng phía máy chủ không lệch nội dung, và chỉ ghi sau khi đã đọc xong — bỏ cờ này thì
  * lượt render đầu (danh sách còn rỗng) sẽ ghi đè mất bản đã lưu.
@@ -42,6 +49,17 @@ function uid(): string {
 }
 
 /**
+ * Bỏ đuôi khung thời gian ở bản lưu cũ.
+ *
+ * Khoá kho hình từng là `MÃ@khung`, nên vẽ ở khung Ngày rồi chuyển sang khung 1 giờ là mất hình.
+ * Gộp về một bộ theo mã: điểm neo vốn không phụ thuộc khung, chỉ cái khoá là phụ thuộc.
+ */
+function liftTimeframe(item: Drawing): Drawing {
+  const at = item.symbol.indexOf('@');
+  return at < 0 ? item : { ...item, symbol: item.symbol.slice(0, at) };
+}
+
+/**
  * Kéo ghi chú dán trên khung ở bản lưu cũ lên dùng chung mọi mã.
  *
  * Trước đây chúng bị gắn vào mã đang xem lúc tạo, nên vẽ ở AAA rồi sang ACB là mất hút, quay về
@@ -50,13 +68,11 @@ function uid(): string {
  */
 function liftNote(item: Drawing): Drawing {
   if (item.tool !== 'note' || item.symbol === GLOBAL_SYMBOL) return item;
-  // Khoá kho hình là `MÃ@khung thời gian` (xem `PriceChart`) — chỉ lấy phần mã.
-  const ticker = item.symbol.split('@')[0];
   const text = item.style?.text?.trim();
   return {
     ...item,
     symbol: GLOBAL_SYMBOL,
-    style: text && text === ticker ? { ...item.style, text: SYMBOL_TOKEN } : item.style,
+    style: text && text === item.symbol ? { ...item.style, text: SYMBOL_TOKEN } : item.style,
   };
 }
 
@@ -69,7 +85,8 @@ function loadDrawings(): Drawing[] {
     // Một mục hỏng (bản lưu cũ, thiếu trường) không được phép làm hỏng cả danh sách.
     return (parsed as Drawing[])
       .filter((item) => item?.id && item.symbol && item.tool && Array.isArray(item.points))
-      .map(liftNote);
+      // Thứ tự có ý nghĩa: `liftNote` so nội dung ghi chú với **mã**, nên đuôi khung phải rụng trước.
+      .map((item) => liftNote(liftTimeframe(item)));
   } catch {
     return [];
   }
@@ -90,8 +107,13 @@ function loadPrefs(): Prefs {
 }
 
 export interface DrawingStore {
-  /** Chỉ hình của mã đang xem. */
+  /** Chỉ hình của mã đang xem (kể cả hình dùng chung). Đây là danh sách **bắt chuột được**. */
   drawings: Drawing[];
+  /**
+   * Hình của những mã khác, chỉ có khi bật `allSymbols`. Vẽ ra để đối chiếu, nhưng nằm ngoài mọi
+   * phép chọn/kéo/xoá — xem chú thích đầu tệp.
+   */
+  ghosts: Drawing[];
   activeTool: DrawingTool;
   setActiveTool: (tool: DrawingTool) => void;
   selectedId: string | null;
@@ -102,6 +124,8 @@ export interface DrawingStore {
   toggleLockAll: () => void;
   hideAll: boolean;
   toggleHideAll: () => void;
+  allSymbols: boolean;
+  toggleAllSymbols: () => void;
   defaultStyle: DrawingStyle;
   setDefaultStyle: (patch: Partial<DrawingStyle>) => void;
   /** Trả về id của hình vừa thêm, hoặc `null` nếu chưa chọn mã nào. */
@@ -114,12 +138,8 @@ export interface DrawingStore {
   clear: () => void;
 }
 
-/**
- * @param symbol Khoá kho hình — `PriceChart` dùng `MÃ@khung thời gian` để mỗi khung một bộ hình.
- * @param ticker Mã trần để thay vào nhãn động. Thiếu thì lấy luôn `symbol`, chấp nhận cả đuôi
- *   khung thời gian còn hơn hiện ra một ô trống.
- */
-export function useDrawings(symbol: string | undefined, ticker?: string): DrawingStore {
+/** @param symbol Mã đang xem. Vừa là khoá kho hình, vừa là chữ thay vào nhãn động `{symbol}`. */
+export function useDrawings(symbol: string | undefined): DrawingStore {
   const [all, setAll] = useState<Drawing[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
   const [hydrated, setHydrated] = useState(false);
@@ -128,6 +148,7 @@ export function useDrawings(symbol: string | undefined, ticker?: string): Drawin
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lockAll, setLockAll] = useState(false);
   const [hideAll, setHideAll] = useState(false);
+  const [allSymbols, setAllSymbols] = useState(false);
 
   useEffect(() => {
     setAll(loadDrawings());
@@ -145,31 +166,40 @@ export function useDrawings(symbol: string | undefined, ticker?: string): Drawin
     }
   }, [hydrated, all, prefs]);
 
-  // Đổi mã thì bỏ chọn và trả về con trỏ: hình đang chọn thuộc mã cũ, và giữ nguyên công cụ đang
-  // cầm sẽ khiến cú bấm đầu tiên trên mã mới vẽ ra một hình ngoài ý muốn.
+  // Đổi mã là bắt đầu lại từ khung sạch: bỏ chọn, trả về con trỏ, tắt xem chồng.
+  //
+  // Hình đang chọn thuộc mã cũ, và giữ nguyên công cụ đang cầm sẽ khiến cú bấm đầu tiên trên mã
+  // mới vẽ ra một hình ngoài ý muốn. Xem chồng mọi mã cũng vậy: nó là một lượt đối chiếu tại chỗ,
+  // không phải chế độ mang theo — sang mã mới mà màn hình còn đầy hình của mã cũ thì không còn
+  // chỗ trống nào để vẽ.
   useEffect(() => {
     setSelectedId(null);
     setActiveToolState('cursor');
+    setAllSymbols(false);
   }, [symbol]);
 
-  const drawings = useMemo(() => {
-    if (!symbol) return [];
-    const label = ticker ?? symbol;
-    return all
-      .filter((item) => item.symbol === symbol || item.symbol === GLOBAL_SYMBOL)
-      .map((item) => {
-        // Thay mã **ở đây**, một chỗ duy nhất, chứ không ở lớp vẽ: mọi nơi đọc `drawings` — lớp
-        // vẽ, phép bắt chuột, thanh chỉnh kiểu — đều cần đúng một chuỗi chữ, và đo hộp chữ theo
-        // ký hiệu `{symbol}` thì vùng bấm rộng hơn hẳn chữ đang hiện.
-        const text = item.style.text;
-        if (!text?.includes(SYMBOL_TOKEN)) return item;
-        return {
-          ...item,
-          dynamicText: true,
-          style: { ...item.style, text: resolveText(text, label) },
-        };
-      });
-  }, [all, symbol, ticker]);
+  const { drawings, ghosts } = useMemo(() => {
+    if (!symbol) return { drawings: [], ghosts: [] };
+
+    // Thay mã **ở đây**, một chỗ duy nhất, chứ không ở lớp vẽ: mọi nơi đọc `drawings` — lớp vẽ,
+    // phép bắt chuột, thanh chỉnh kiểu — đều cần đúng một chuỗi chữ, và đo hộp chữ theo ký hiệu
+    // `{symbol}` thì vùng bấm rộng hơn hẳn chữ đang hiện.
+    const resolve = (item: Drawing, label: string): Drawing => {
+      const text = item.style.text;
+      if (!text?.includes(SYMBOL_TOKEN)) return item;
+      return { ...item, dynamicText: true, style: { ...item.style, text: resolveText(text, label) } };
+    };
+
+    const mine: Drawing[] = [];
+    const others: Drawing[] = [];
+    for (const item of all) {
+      if (item.symbol === symbol || item.symbol === GLOBAL_SYMBOL) mine.push(resolve(item, symbol));
+      // Nhãn động của hình mã khác thay bằng **mã chủ của nó**, không phải mã đang xem: một ghi
+      // chú của VNM mà hiện chữ "HPG" thì đọc xong hiểu sai hẳn.
+      else if (allSymbols) others.push(resolve(item, item.symbol));
+    }
+    return { drawings: mine, ghosts: others };
+  }, [all, symbol, allSymbols]);
 
   const setActiveTool = useCallback((tool: DrawingTool) => {
     setActiveToolState(tool);
@@ -231,6 +261,9 @@ export function useDrawings(symbol: string | undefined, ticker?: string): Drawin
     if (!symbol) return;
     // Xoá cả hình dùng chung: người dùng bấm "xoá hết" khi đang nhìn thấy chúng, để lại một cái
     // nhãn vẫn nằm giữa biểu đồ thì đúng là nút bấm hỏng.
+    //
+    // Nhưng **không** đụng tới hình của mã khác, kể cả khi đang bật xem chồng: một nút trong
+    // thanh công cụ không được phép quét sạch hình của cả chục mã người dùng không hề mở.
     setAll((current) =>
       current.filter((item) => item.symbol !== symbol && item.symbol !== GLOBAL_SYMBOL),
     );
@@ -248,6 +281,7 @@ export function useDrawings(symbol: string | undefined, ticker?: string): Drawin
 
   return {
     drawings,
+    ghosts,
     activeTool,
     setActiveTool,
     selectedId,
@@ -258,6 +292,8 @@ export function useDrawings(symbol: string | undefined, ticker?: string): Drawin
     toggleLockAll: useCallback(() => setLockAll((on) => !on), []),
     hideAll,
     toggleHideAll: useCallback(() => setHideAll((on) => !on), []),
+    allSymbols,
+    toggleAllSymbols: useCallback(() => setAllSymbols((on) => !on), []),
     defaultStyle: prefs.defaultStyle,
     setDefaultStyle,
     add,

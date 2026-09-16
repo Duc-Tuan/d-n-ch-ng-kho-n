@@ -67,9 +67,23 @@ export function mergeCandles(current: Candle[], incoming: Candle[]): Candle[] {
  *   lệnh đầu tiên: lúc gọi API kho giá chưa có gì để máy chủ ghép vào.
  * * Cây cuối mới hơn phiên của gói tin → để yên. Người dùng đang cuộn ở quá khứ, hoặc gói tin
  *   là của phiên đã đóng từ hôm trước.
+ *
+ * `symbol` là mã mà **chuỗi nến** thuộc về, và nó bắt buộc: hàm này là chỗ duy nhất trong cả ứng
+ * dụng hàn một mức giá vào một chuỗi nến, nên nó phải là chỗ kiểm tra hai bên có cùng một mã hay
+ * không. Không kiểm thì chỉ cần một lần lệch — đổi mã mà chuỗi nến của mã cũ còn trên tay — là
+ * biểu đồ mang tên AAA vẽ nguyên lịch sử của ABB kèm đúng một cây nến giá AAA ở cuối, và không
+ * có gì trên màn hình nói ra điều đó.
  */
-export function withLiveQuote(candles: Candle[], quote: Quote | undefined): Candle[] {
+export function withLiveQuote(
+  candles: Candle[],
+  quote: Quote | undefined,
+  symbol: string,
+): Candle[] {
   if (!quote || quote.price === null) return candles;
+  if (quote.symbol.toUpperCase() !== symbol.trim().toUpperCase()) return candles;
+  // Chuỗi nến chưa về thì không dựng một cây nến đơn độc từ gói tin: một biểu đồ đúng một cây
+  // nến chớp lên giữa hai mã trông như dữ liệu hỏng chứ không như đang tải.
+  if (!candles.length) return candles;
 
   const price = quote.price;
   // Ngày giao dịch của gói tin theo giờ Việt Nam (BR-130) — `trade_date` của nến cũng vậy, nên
