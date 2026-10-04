@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "stock-articles": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "-e",
+        "PYTHONIOENCODING=utf-8",
+        "-e",
+        "PYTHONPATH=/app/backend",
+        "stock",
+        "python",
+        "/app/backend/app/mcp/article_server.py"
+      ]
+    },
+    "stock-analysis": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "-e",
+        "PYTHONIOENCODING=utf-8",
+        "-e",
+        "PYTHONPATH=/app/backend",
+        "stock",
+        "python",
+        "/app/backend/app/mcp/server.py"
+      ]
+    }
+  }
+}
