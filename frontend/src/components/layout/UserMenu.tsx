@@ -182,9 +182,9 @@ export function Brand({
       </span>
       {!compact && (
         <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold leading-tight text-ink-900">
+          {/* <span className="block truncate text-sm font-semibold leading-tight text-ink-900">
             {label}
-          </span>
+          </span> */}
           {sublabel && (
             <span className="block truncate text-xs leading-tight text-ink-500">{sublabel}</span>
           )}

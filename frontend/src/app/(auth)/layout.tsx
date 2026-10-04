@@ -51,7 +51,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
               <span className="brand-mark flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold">
                 CK
               </span>
-              <span className="text-lg">Tư vấn chứng khoán</span>
+              {/* <span className="text-lg">Tư vấn chứng khoán</span> */}
             </Link>
 
             <div className="relative space-y-7 py-8">
@@ -114,7 +114,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
                   <span className="brand-mark flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold">
                     CK
                   </span>
-                  Tư vấn chứng khoán
+                  {/* Tư vấn chứng khoán */}
                 </Link>
 
                 {/* Người chưa đăng nhập cũng phải đổi được nền: màn này là màn đầu tiên họ thấy,

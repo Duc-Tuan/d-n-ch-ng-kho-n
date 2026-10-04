@@ -22,6 +22,12 @@ import json
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from app.core.config import BASE_DIR
 
 #: Thư mục gốc dự án — `BASE_DIR` là thư mục `backend`.
@@ -51,7 +57,17 @@ def build() -> dict:
                     # Thắt lưng thêm dây an toàn: kể cả khi `sys.path` tự nạp có vấn đề.
                     "PYTHONPATH": str(BASE_DIR.resolve()),
                 },
-            }
+            },
+            "stock-articles": {
+                "command": str(Path(sys.executable).resolve()),
+                "args": [str((BASE_DIR / "app" / "mcp" / "article_server.py").resolve())],
+                "cwd": str(BASE_DIR.resolve()),
+                "env": {
+                    "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONPATH": str(BASE_DIR.resolve()),
+                },
+            },
         }
     }
 

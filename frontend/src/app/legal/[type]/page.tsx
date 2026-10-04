@@ -78,9 +78,9 @@ function LegalContent() {
             <span className="brand-mark flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-bold tracking-tight">
               CK
             </span>
-            <span className="truncate text-sm font-semibold text-ink-900">
+            {/* <span className="truncate text-sm font-semibold text-ink-900">
               Tư vấn chứng khoán
-            </span>
+            </span> */}
           </Link>
 
           <div className="flex shrink-0 items-center gap-1">
