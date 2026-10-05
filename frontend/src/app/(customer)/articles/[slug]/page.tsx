@@ -81,6 +81,7 @@ export default function ArticleDetailPage() {
       if (used.has(id)) id = `${id}-${index + 1}`;
       used.add(id);
       el.id = id;
+      el.classList.add('scroll-mt-6');
       items.push({ id, text, level: el.tagName === 'H3' ? 3 : 2 });
     });
 
@@ -98,30 +99,55 @@ export default function ArticleDetailPage() {
 
   /**
    * Một trình nghe cuộn duy nhất phục vụ cả hai việc: tô sáng mục đang đọc và vẽ thanh tiến độ.
-   * Tách làm hai listener chỉ khiến trình duyệt tính lại bố cục hai lần trong cùng một khung hình.
+   * Lắng nghe cả vùng cuộn chính (<main> trong CustomerShell) lẫn window để đảm bảo hoạt động
+   * chính xác ở mọi kích thước màn hình và cách bố cục khung.
    */
   useEffect(() => {
+    const mainEl = document.querySelector('main');
     const root = document.documentElement;
 
     const onScroll = () => {
-      const scrollable = root.scrollHeight - root.clientHeight;
-      setProgress(scrollable > 0 ? Math.min(100, (root.scrollTop / scrollable) * 100) : 0);
+      const container = (mainEl && mainEl.scrollHeight > mainEl.clientHeight) ? mainEl : root;
+      const isCustomContainer = container !== root;
+
+      const scrollTop = isCustomContainer ? container.scrollTop : (window.scrollY || root.scrollTop);
+      const scrollable = container.scrollHeight - container.clientHeight;
+      setProgress(scrollable > 0 ? Math.min(100, Math.max(0, (scrollTop / scrollable) * 100)) : 0);
 
       if (!headings.length) return;
+
+      // Nếu đã cuộn gần chạm đáy (còn < 40px), kích hoạt mục cuối cùng
+      if (scrollable > 0 && scrollTop >= scrollable - 40) {
+        setActiveId(headings[headings.length - 1].id);
+        return;
+      }
+
       let current = headings[0].id;
       for (const heading of headings) {
         const el = document.getElementById(heading.id);
-        // 120px ≈ chiều cao thanh điều hướng dính cộng một khoảng thở: tiêu đề vừa chạm mép trên
-        // là đã được coi là mục đang đọc.
-        if (el && el.getBoundingClientRect().top <= 120) current = heading.id;
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          // Chiều cao header ~68px (4.25rem), cộng khoảng đệm ~70px -> 140px
+          if (rect.top <= 140) {
+            current = heading.id;
+          }
+        }
       }
       setActiveId(current);
     };
 
     onScroll();
+
+    if (mainEl) {
+      mainEl.addEventListener('scroll', onScroll, { passive: true });
+    }
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onScroll);
+
     return () => {
+      if (mainEl) {
+        mainEl.removeEventListener('scroll', onScroll);
+      }
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onScroll);
     };
@@ -211,11 +237,19 @@ export default function ArticleDetailPage() {
                   <a
                     key={heading.id}
                     href={`#${heading.id}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const el = document.getElementById(heading.id);
+                      if (el) {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        setActiveId(heading.id);
+                      }
+                    }}
                     className={cn(
                       '-ml-px block border-l-2 py-1.5 leading-snug transition-colors',
                       heading.level === 3 ? 'pl-6 text-[13px]' : 'pl-4 text-sm',
                       activeId === heading.id
-                        ? 'border-ink-900 font-medium text-ink-900'
+                        ? 'border-brand font-medium text-brand'
                         : 'border-transparent text-ink-500 hover:border-ink-300 hover:text-ink-800',
                     )}
                   >
